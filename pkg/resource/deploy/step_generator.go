@@ -52,7 +52,7 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, err
 
 	goal := event.Goal()
 	// generate an URN for this new resource.
-	urn := sg.generateURN(event)
+	urn := sg.plan.generateURN(event)
 	if sg.urns[urn] {
 		invalid = true
 		// TODO[pulumi/pulumi-framework#19]: improve this error message!
@@ -407,19 +407,6 @@ func (sg *stepGenerator) getResourcePropertyStates(urn resource.URN, goal *resou
 		resource.NewState(goal.Type, urn, goal.Custom, false, "",
 			inputs, outputs, goal.Parent, goal.Protect, goal.Dependencies)
 
-}
-
-func (sg *stepGenerator) generateURN(e RegisterResourceEvent) resource.URN {
-	// Use the resource goal state name to produce a globally unique URN.
-
-	goal := e.Goal()
-	parentType := tokens.Type("")
-	if p := goal.Parent; p != "" && p.Type() != resource.RootStackType {
-		// Skip empty parents and don't use the root stack type; otherwise, use the full qualified type.
-		parentType = p.QualifiedType()
-	}
-
-	return resource.NewURN(sg.plan.Target().Name, sg.plan.source.Project(), parentType, goal.Type, goal.Name)
 }
 
 // issueCheckErrors prints any check errors to the diagnostics sink.

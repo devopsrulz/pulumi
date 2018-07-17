@@ -105,3 +105,13 @@ func (p *Plan) Provider(pkg tokens.Package) (plugin.Provider, error) {
 	//     we will just pass nil, which returns us the most recent version available to us.
 	return p.ctx.Host.Provider(pkg, nil)
 }
+
+// generateURN generates a resource's URN from its goal state.
+func (p *Plan) generateURN(g *resource.Goal) reosurce.URN {
+	parentType := tokens.Type("")
+	if p := goal.Parent; p != "" && p.Type() != resource.RootStackType {
+		// Skip empty parents and don't use the root stack type; otherwise, use the full qualified type.
+		parentType = p.QualifiedType()
+	}
+	return resource.NewURN(p.Target().Name, p.source.Project(), parentType, goal.Type, goal.Name)
+}
