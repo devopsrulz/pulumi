@@ -17,11 +17,12 @@ package deploy
 import (
 	"reflect"
 
+	"github.com/blang/semver"
 	"github.com/pkg/errors"
 
 	"github.com/pulumi/pulumi/pkg/resource"
+	"github.com/pulumi/pulumi/pkg/resource/config"
 	"github.com/pulumi/pulumi/pkg/resource/plugin"
-	"github.com/pulumi/pulumi/pkg/tokens"
 	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/util/logging"
 )
@@ -49,12 +50,13 @@ func (p *Plan) Start(opts Options) (*PlanIterator, error) {
 
 	// Create an iterator that can be used to perform the planning process.
 	return &PlanIterator{
-		p:           p,
-		opts:        opts,
-		src:         src,
-		stepGen:     newStepGenerator(p, opts),
-		pendingNews: make(map[resource.URN]Step),
-		dones:       make(map[*resource.State]bool),
+		p:            p,
+		opts:         opts,
+		src:          src,
+		stepGen:      newStepGenerator(p, opts),
+		metaProvider: newMetaProvider(p.ctx.Host),
+		pendingNews:  make(map[resource.URN]Step),
+		dones:        make(map[*resource.State]bool),
 	}, nil
 }
 
@@ -75,6 +77,8 @@ type PlanIterator struct {
 	opts    Options        // the options this iterator was created with.
 	src     SourceIterator // the iterator that fetches source resources.
 	stepGen *stepGenerator // the step generator for this plan.
+
+	metaProvider *metaProvider // the metaProvider to use for dealing with resource providers
 
 	pendingNews map[resource.URN]Step // a map of logical steps currently active.
 
@@ -178,11 +182,39 @@ outer:
 				// If we have an event, drive the behavior based on which kind it is.
 				switch e := event.(type) {
 				case RegisterResourceEvent:
+					var steps []Step
+
+					// Check this resource's provider property. If no such property is present, use the appropriate
+					// global provider. If that provider has not yet been instantiated, generate its steps and add them
+					// to the queue.
+					g := e.Goal()
+					if g.Custom && g.Type.Package() != "pulumi-providers" && g.Provider == "" {
+						defaultProviderURN := iter.p.defaultProviderURN(g.Type)
+						_, proverr := iter.metaProvider.getProvider(defaultProviderURN)
+						switch {
+						case proverr == errMissingProvider:
+							cfg, cfgerr := iter.p.Target().GetPackageConfig(g.Type.Package())
+							if cfgerr != nil {
+								return nil, cfgerr
+							}
+
+							provEvent := newDefaultProviderEvent(defaultProviderURN, cfg, nil)
+							provSteps, steperr := iter.stepGen.GenerateSteps(provEvent)
+							if steperr != nil {
+								return nil, steperr
+							}
+							steps = provSteps
+						case proverr != nil:
+							return nil, proverr
+						}
+					}
+
 					// If the intent is to register a resource, compute the plan steps necessary to do so.
-					steps, steperr := iter.stepGen.GenerateSteps(e)
+					eventSteps, steperr := iter.stepGen.GenerateSteps(e)
 					if steperr != nil {
 						return nil, steperr
 					}
+					steps = append(steps, eventSteps...)
 					contract.Assert(len(steps) > 0)
 					if len(steps) > 1 {
 						iter.stepqueue = steps[1:]
@@ -254,15 +286,50 @@ func (iter *PlanIterator) nextDeleteStep() Step {
 	return nil
 }
 
-// Provider fetches the provider for a given resource type, possibly lazily allocating the plugins for it.  If a
+// Provider fetches the provider for a given resource, possibly lazily allocating the plugins for it.  If a
 // provider could not be found, or an error occurred while creating it, a non-nil error is returned.
-func (iter *PlanIterator) Provider(t tokens.Type) (plugin.Provider, error) {
-	pkg := t.Package()
-	prov, err := iter.p.Provider(pkg)
+func (iter *PlanIterator) Provider(g *resource.Goal) (plugin.Provider, error) {
+	contract.Require(g.Provider != "", "g")
+
+	prov, err := iter.metaProvider.getProvider(g.Provider)
 	if err != nil {
-		return nil, err
-	} else if prov == nil {
-		return nil, errors.Errorf("could not load resource provider for package '%v' from $PATH", pkg)
+		return nil,
+			errors.Errorf("error fetching provider %v for resource %v: %v", g.Provider, iter.p.generateURN(g), err)
 	}
+
 	return prov, nil
 }
+
+type defaultProviderEvent struct {
+	g resource.Goal
+}
+
+func newDefaultProviderEvent(urn resource.URN, cfg map[config.Key]string,
+	version *semver.Version) *defaultProviderEvent {
+
+	properties := make(resource.PropertyMap)
+	for k, v := range cfg {
+		properties[resource.PropertyKey(k.Name())] = resource.NewStringProperty(v)
+	}
+
+	return &defaultProviderEvent {
+		g: resource.Goal{
+			Type: urn.Type(),
+			Name: urn.Name(),
+			Custom: true,
+			Properties: properties,
+			Parent: "",
+			Protect: false,
+			Provider: "",
+			Dependencies: nil,
+		},
+	}
+}
+
+func (*defaultProviderEvent) event() {}
+
+func (e *defaultProviderEvent) Goal() *resource.Goal {
+	return &e.g
+}
+
+func (e *defaultProviderEvent) Done(_ *RegisterResult) {}

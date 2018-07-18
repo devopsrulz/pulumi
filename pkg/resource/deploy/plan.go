@@ -50,7 +50,7 @@ type Plan struct {
 // Note that a plan uses internal concurrency and parallelism in various ways, so it must be closed if for some reason
 // a plan isn't carried out to its final conclusion.  This will result in cancelation and reclamation of OS resources.
 func NewPlan(ctx *plugin.Context, target *Target, prev *Snapshot, source Source, analyzers []tokens.QName,
-	preview bool) *Plan {
+	preview bool, defaultProviderVersions map[tokens.Package]*semver.Version) *Plan {
 
 	contract.Assert(ctx != nil)
 	contract.Assert(target != nil)
@@ -107,11 +107,17 @@ func (p *Plan) Provider(pkg tokens.Package) (plugin.Provider, error) {
 }
 
 // generateURN generates a resource's URN from its goal state.
-func (p *Plan) generateURN(g *resource.Goal) reosurce.URN {
+func (p *Plan) generateURN(g *resource.Goal) resource.URN {
 	parentType := tokens.Type("")
-	if p := goal.Parent; p != "" && p.Type() != resource.RootStackType {
+	if p := g.Parent; p != "" && p.Type() != resource.RootStackType {
 		// Skip empty parents and don't use the root stack type; otherwise, use the full qualified type.
 		parentType = p.QualifiedType()
 	}
-	return resource.NewURN(p.Target().Name, p.source.Project(), parentType, goal.Type, goal.Name)
+	return resource.NewURN(p.Target().Name, p.source.Project(), parentType, g.Type, g.Name)
+}
+
+// defaultProviderURN generates the URN for the global provider given a type.
+func (p *Plan) defaultProviderURN(t tokens.Type) resource.URN {
+	providerType := tokens.Type("pulumi-providers:providers:" + t.Package())
+	return resource.NewURN(p.Target().Name, p.source.Project(), "", providerType, "default")
 }

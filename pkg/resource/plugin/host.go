@@ -43,9 +43,11 @@ type Host interface {
 	// Analyzer fetches the analyzer with a given name, possibly lazily allocating the plugins for it.  If an analyzer
 	// could not be found, or an error occurred while creating it, a non-nil error is returned.
 	Analyzer(nm tokens.QName) (Analyzer, error)
-	// Provider fetches the provider for a given package, lazily allocating it if necessary.  If a provider for this
-	// package could not be found, or an error occurs while creating it, a non-nil error is returned.
+	// Provider loads a new copy of the provider for a given package.  If a provider for this package could not be
+	// found, or an error occurs while creating it, a non-nil error is returned.
 	Provider(pkg tokens.Package, version *semver.Version) (Provider, error)
+	// CloseProvider closes the given provider plugin and deregisters it from this host.
+	CloseProvider(provider Provider) error
 	// LanguageRuntime fetches the language runtime plugin for a given language, lazily allocating if necessary.  If
 	// an implementation of this language runtime wasn't found, on an error occurs, a non-nil error is returned.
 	LanguageRuntime(runtime string) (LanguageRuntime, error)
@@ -85,7 +87,7 @@ func NewDefaultHost(ctx *Context, config ConfigSource, events Events) (Host, err
 		events:          events,
 		analyzerPlugins: make(map[tokens.QName]*analyzerPlugin),
 		languagePlugins: make(map[string]*languagePlugin),
-		resourcePlugins: make(map[tokens.Package]*resourcePlugin),
+		resourcePlugins: make(map[Provider]*resourcePlugin),
 		loadRequests:    make(chan pluginLoadRequest),
 	}
 
@@ -118,7 +120,7 @@ type defaultHost struct {
 	events          Events                             // optional callbacks for plugin load events
 	analyzerPlugins map[tokens.QName]*analyzerPlugin   // a cache of analyzer plugins and their processes.
 	languagePlugins map[string]*languagePlugin         // a cache of language plugins and their processes.
-	resourcePlugins map[tokens.Package]*resourcePlugin // a cache of resource plugins and their processes.
+	resourcePlugins map[Provider]*resourcePlugin       // the set of loaded resource plugins.
 	plugins         []workspace.PluginInfo             // a list of plugins allocated by this host.
 	loadRequests    chan pluginLoadRequest             // a channel used to satisfy plugin load requests.
 	server          *hostServer                        // the server's RPC machinery.
@@ -201,27 +203,7 @@ func (host *defaultHost) Analyzer(name tokens.QName) (Analyzer, error) {
 
 func (host *defaultHost) Provider(pkg tokens.Package, version *semver.Version) (Provider, error) {
 	plugin, err := host.loadPlugin(func() (interface{}, error) {
-		// First see if we already loaded this plugin.
-		if plug, has := host.resourcePlugins[pkg]; has {
-			contract.Assert(plug != nil)
-
-			// Make sure the versions match.
-			if version != nil {
-				if plug.Info.Version == nil {
-					return nil,
-						errors.Errorf("resource plugin version %s requested, but an unknown version was found",
-							version.String())
-				} else if !plug.Info.Version.GTE(*version) {
-					return nil,
-						errors.Errorf("resource plugin version %s requested, but version %s was found",
-							version.String(), plug.Info.Version.String())
-				}
-			}
-
-			return plug.Plugin, nil
-		}
-
-		// If not, try to load and bind to a plugin.
+		// Try to load and bind to a plugin.
 		plug, err := NewProvider(host, host.ctx, pkg, version)
 		if err == nil && plug != nil {
 			info, infoerr := plug.GetPluginInfo()
@@ -259,7 +241,7 @@ func (host *defaultHost) Provider(pkg tokens.Package, version *semver.Version) (
 
 			// Memoize the result.
 			host.plugins = append(host.plugins, info)
-			host.resourcePlugins[pkg] = &resourcePlugin{Plugin: plug, Info: info}
+			host.resourcePlugins[plug] = &resourcePlugin{Plugin: plug, Info: info}
 			if host.events != nil {
 				if eventerr := host.events.OnPluginLoad(info); eventerr != nil {
 					return nil, errors.Wrapf(eventerr, "failed to perform plugin load callback")
@@ -408,6 +390,18 @@ func (host *defaultHost) SignalCancellation() error {
 	return result
 }
 
+func (host *defaultHost) CloseProvider(provider Provider) error {
+	// NOTE: we're abusing loadPlugin in order to ensure proper synchronization.
+	_, err := host.loadPlugin(func() (interface{}, error) {
+		if err := provider.Close(); err != nil {
+			return nil, err
+		}
+		delete(host.resourcePlugins, provider)
+		return nil, nil
+	})
+	return err
+}
+
 func (host *defaultHost) Close() error {
 	// Close all plugins.
 	for _, plug := range host.analyzerPlugins {
@@ -429,7 +423,7 @@ func (host *defaultHost) Close() error {
 	// Empty out all maps.
 	host.analyzerPlugins = make(map[tokens.QName]*analyzerPlugin)
 	host.languagePlugins = make(map[string]*languagePlugin)
-	host.resourcePlugins = make(map[tokens.Package]*resourcePlugin)
+	host.resourcePlugins = make(map[Provider]*resourcePlugin)
 
 	// Shut down the plugin loader.
 	close(host.loadRequests)

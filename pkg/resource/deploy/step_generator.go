@@ -52,7 +52,7 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, err
 
 	goal := event.Goal()
 	// generate an URN for this new resource.
-	urn := sg.plan.generateURN(event)
+	urn := sg.plan.generateURN(goal)
 	if sg.urns[urn] {
 		invalid = true
 		// TODO[pulumi/pulumi-framework#19]: improve this error message!

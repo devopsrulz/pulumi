@@ -27,6 +27,7 @@ type Goal struct {
 	Properties   PropertyMap  // the resource's property state.
 	Parent       URN          // an optional parent URN for this resource.
 	Protect      bool         // true to protect this resource from deletion.
+	Provider     URN          // the URN for this resource's provider.
 	Dependencies []URN        // dependencies of this resource object.
 }
 

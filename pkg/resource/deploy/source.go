@@ -29,6 +29,8 @@ type Source interface {
 	Project() tokens.PackageName
 	// Info returns a serializable payload that can be used to stamp snapshots for future reconciliation.
 	Info() interface{}
+	// DefaultProviderVersion fetches the default version for the given provider from the source.
+	DefaultProviderVersion(pkg tokens.Package) *semver.Version
 	// IsRefresh indicates whether this source returns events source from existing state (true), and hence can simply
 	// be assumed to reflect existing state, or whether the events should acted upon (false).
 	IsRefresh() bool
