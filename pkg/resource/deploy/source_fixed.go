@@ -15,6 +15,8 @@
 package deploy
 
 import (
+	"github.com/blang/semver"
+
 	"github.com/pulumi/pulumi/pkg/tokens"
 )
 
@@ -33,6 +35,10 @@ func (src *fixedSource) Close() error                { return nil }
 func (src *fixedSource) Project() tokens.PackageName { return src.ctx }
 func (src *fixedSource) Info() interface{}           { return nil }
 func (src *fixedSource) IsRefresh() bool             { return false }
+
+func (src *fixedSource) DefaultProviderVersion(pkg tokens.Package) *semver.Version {
+	return nil
+}
 
 func (src *fixedSource) Iterate(opts Options) (SourceIterator, error) {
 	return &fixedSourceIterator{

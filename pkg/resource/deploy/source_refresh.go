@@ -15,6 +15,7 @@
 package deploy
 
 import (
+	"github.com/blang/semver"
 	"github.com/pkg/errors"
 
 	"github.com/pulumi/pulumi/pkg/resource"
@@ -25,11 +26,13 @@ import (
 
 // NewRefreshSource returns a new source that generates events based on reading an existing checkpoint state,
 // combined with refreshing its associated resource state from the cloud provider.
-func NewRefreshSource(plugctx *plugin.Context, proj *workspace.Project, target *Target, dryRun bool) Source {
+func NewRefreshSource(plugctx *plugin.Context, proj *workspace.Project, target *Target,
+	defaultProviderVersions map[tokens.Package]*semver.Version, dryRun bool) Source {
 	return &refreshSource{
 		plugctx: plugctx,
 		proj:    proj,
 		target:  target,
+		defaultProviderVersions: defaultProviderVersions,
 		dryRun:  dryRun,
 	}
 }
@@ -39,6 +42,7 @@ type refreshSource struct {
 	plugctx *plugin.Context
 	proj    *workspace.Project
 	target  *Target
+	defaultProviderVersions map[tokens.Package]*semver.Version // the default provider verisons for this source.
 	dryRun  bool
 }
 
@@ -46,6 +50,13 @@ func (src *refreshSource) Close() error                { return nil }
 func (src *refreshSource) Project() tokens.PackageName { return src.proj.Name }
 func (src *refreshSource) Info() interface{}           { return nil }
 func (src *refreshSource) IsRefresh() bool             { return true }
+
+func (src *refreshSource) DefaultProviderVersion(pkg tokens.Package) *semver.Version {
+	if v, ok := src.defaultProviderVersions[pkg]; ok {
+		return v
+	}
+	return nil
+}
 
 func (src *refreshSource) Iterate(opts Options) (SourceIterator, error) {
 	var states []*resource.State

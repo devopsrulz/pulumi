@@ -17,6 +17,7 @@ package deploy
 import (
 	"fmt"
 
+	"github.com/blang/semver"
 	pbempty "github.com/golang/protobuf/ptypes/empty"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -46,10 +47,13 @@ type EvalRunInfo struct {
 // NewEvalSource returns a planning source that fetches resources by evaluating a package with a set of args and
 // a confgiuration map.  This evaluation is performed using the given plugin context and may optionally use the
 // given plugin host (or the default, if this is nil).  Note that closing the eval source also closes the host.
-func NewEvalSource(plugctx *plugin.Context, runinfo *EvalRunInfo, dryRun bool) Source {
+func NewEvalSource(plugctx *plugin.Context, runinfo *EvalRunInfo,
+	defaultProviderVersions map[tokens.Package]*semver.Version, dryRun bool) Source {
+
 	return &evalSource{
 		plugctx: plugctx,
 		runinfo: runinfo,
+		defaultProviderVersions: defaultProviderVersions,
 		dryRun:  dryRun,
 	}
 }
@@ -57,6 +61,7 @@ func NewEvalSource(plugctx *plugin.Context, runinfo *EvalRunInfo, dryRun bool) S
 type evalSource struct {
 	plugctx *plugin.Context // the plugin context.
 	runinfo *EvalRunInfo    // the directives to use when running the program.
+	defaultProviderVersions map[tokens.Package]*semver.Version // the default provider verisons for this source.
 	dryRun  bool            // true if this is a dry-run operation only.
 }
 
@@ -76,6 +81,13 @@ func (src *evalSource) Stack() tokens.QName {
 
 func (src *evalSource) Info() interface{} { return src.runinfo }
 func (src *evalSource) IsRefresh() bool   { return false }
+
+func (src *evalSource) DefaultProviderVersion(pkg tokens.Package) *semver.Version {
+	if v, ok := src.defaultProviderVersions[pkg]; ok {
+		return v
+	}
+	return nil
+}
 
 // Iterate will spawn an evaluator coroutine and prepare to interact with it on subsequent calls to Next.
 func (src *evalSource) Iterate(opts Options) (SourceIterator, error) {

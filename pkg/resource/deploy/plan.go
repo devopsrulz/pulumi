@@ -50,7 +50,7 @@ type Plan struct {
 // Note that a plan uses internal concurrency and parallelism in various ways, so it must be closed if for some reason
 // a plan isn't carried out to its final conclusion.  This will result in cancelation and reclamation of OS resources.
 func NewPlan(ctx *plugin.Context, target *Target, prev *Snapshot, source Source, analyzers []tokens.QName,
-	preview bool, defaultProviderVersions map[tokens.Package]*semver.Version) *Plan {
+	preview bool) *Plan {
 
 	contract.Assert(ctx != nil)
 	contract.Assert(target != nil)

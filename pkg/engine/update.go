@@ -17,6 +17,8 @@ package engine
 import (
 	"time"
 
+	"github.com/blang/semver"
+
 	"github.com/pulumi/pulumi/pkg/diag"
 	"github.com/pulumi/pulumi/pkg/resource"
 	"github.com/pulumi/pulumi/pkg/resource/deploy"
@@ -96,7 +98,7 @@ func newUpdateSource(
 	// Collect the version information for default providers.
 	defaultProviderVersions := make(map[tokens.Package]*semver.Version)
 	for _, p := range plugins {
-		if !p.Kind == workspace.ResourcePlugin {
+		if p.Kind != workspace.ResourcePlugin {
 			continue
 		}
 		defaultProviderVersions[tokens.Package(p.Name)] = p.Version
@@ -109,7 +111,7 @@ func newUpdateSource(
 		Pwd:     pwd,
 		Program: main,
 		Target:  target,
-	}, dryRun), nil
+	}, defaultProviderVersions, dryRun), nil
 }
 
 func update(ctx *Context, info *planContext, opts planOptions, dryRun bool) (ResourceChanges, error) {

@@ -22,7 +22,6 @@ import (
 
 	"github.com/pulumi/pulumi/pkg/resource"
 	"github.com/pulumi/pulumi/pkg/resource/config"
-	"github.com/pulumi/pulumi/pkg/resource/plugin"
 	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/util/logging"
 )
@@ -49,12 +48,13 @@ func (p *Plan) Start(opts Options) (*PlanIterator, error) {
 	}
 
 	// Create an iterator that can be used to perform the planning process.
+	meta := newMetaProvider(p.ctx.Host)
 	return &PlanIterator{
 		p:            p,
 		opts:         opts,
 		src:          src,
-		stepGen:      newStepGenerator(p, opts),
-		metaProvider: newMetaProvider(p.ctx.Host),
+		stepGen:      newStepGenerator(p, meta, opts),
+		metaProvider: meta,
 		pendingNews:  make(map[resource.URN]Step),
 		dones:        make(map[*resource.State]bool),
 	}, nil
@@ -198,7 +198,9 @@ outer:
 								return nil, cfgerr
 							}
 
-							provEvent := newDefaultProviderEvent(defaultProviderURN, cfg, nil)
+							version := iter.p.source.DefaultProviderVersion(g.Type.Package())
+
+							provEvent := newDefaultProviderEvent(defaultProviderURN, cfg, version)
 							provSteps, steperr := iter.stepGen.GenerateSteps(provEvent)
 							if steperr != nil {
 								return nil, steperr
@@ -207,6 +209,7 @@ outer:
 						case proverr != nil:
 							return nil, proverr
 						}
+						g.Provider = defaultProviderURN
 					}
 
 					// If the intent is to register a resource, compute the plan steps necessary to do so.
@@ -284,20 +287,6 @@ func (iter *PlanIterator) nextDeleteStep() Step {
 		return del
 	}
 	return nil
-}
-
-// Provider fetches the provider for a given resource, possibly lazily allocating the plugins for it.  If a
-// provider could not be found, or an error occurred while creating it, a non-nil error is returned.
-func (iter *PlanIterator) Provider(g *resource.Goal) (plugin.Provider, error) {
-	contract.Require(g.Provider != "", "g")
-
-	prov, err := iter.metaProvider.getProvider(g.Provider)
-	if err != nil {
-		return nil,
-			errors.Errorf("error fetching provider %v for resource %v: %v", g.Provider, iter.p.generateURN(g), err)
-	}
-
-	return prov, nil
 }
 
 type defaultProviderEvent struct {

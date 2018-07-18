@@ -23,7 +23,6 @@ import (
 
 	"github.com/pulumi/pulumi/pkg/diag"
 	"github.com/pulumi/pulumi/pkg/resource"
-	"github.com/pulumi/pulumi/pkg/resource/config"
 	"github.com/pulumi/pulumi/pkg/tokens"
 	"github.com/pulumi/pulumi/pkg/util/cmdutil"
 	"github.com/pulumi/pulumi/pkg/util/contract"
@@ -224,19 +223,6 @@ func (host *defaultHost) Provider(pkg tokens.Package, version *semver.Version) (
 								"the wrong version may be on your path, or this may be a bug in the plugin"),
 						info.Name, version.String(), v)
 				}
-			}
-
-			// Configure the provider. If no configuration source is present, assume no configuration. We do this here
-			// because resource providers must be configured exactly once before any method besides Configure is called.
-			providerConfig := make(map[config.Key]string)
-			if host.config != nil {
-				providerConfig, err = host.config.GetPackageConfig(pkg)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to fetch configuration for pkg '%v' resource provider", pkg)
-				}
-			}
-			if err = plug.Configure(providerConfig); err != nil {
-				return nil, errors.Wrapf(err, "failed to configure pkg '%v' resource provider", pkg)
 			}
 
 			// Memoize the result.

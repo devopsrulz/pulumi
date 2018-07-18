@@ -15,8 +15,11 @@
 package engine
 
 import (
+	"github.com/blang/semver"
+
 	"github.com/pulumi/pulumi/pkg/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/resource/plugin"
+	"github.com/pulumi/pulumi/pkg/tokens"
 	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/workspace"
 )
@@ -47,15 +50,24 @@ func newRefreshSource(opts planOptions, proj *workspace.Project, pwd, main strin
 	target *deploy.Target, plugctx *plugin.Context, dryRun bool) (deploy.Source, error) {
 
 	// First, consult the manifest for the plugins we will need to ask to refresh the state.
+	defaultProviderVersions := make(map[tokens.Package]*semver.Version)
 	if target != nil && target.Snapshot != nil {
 		// We don't need the language plugin, since refresh doesn't run code, so we will leave that out.
-		kinds := plugin.AllPlugins & ^plugin.LanguagePlugins
+		const kinds = plugin.AnalyzerPlugins
 		if err := plugctx.Host.EnsurePlugins(target.Snapshot.Manifest.Plugins, kinds); err != nil {
 			return nil, err
+		}
+
+		// Collect the version information for default providers.
+		for _, p := range target.Snapshot.Manifest.Plugins {
+			if p.Kind != workspace.ResourcePlugin {
+				continue
+			}
+			defaultProviderVersions[tokens.Package(p.Name)] = p.Version
 		}
 	}
 
 	// Now create a refresh source.  This source simply loads up the current checkpoint state, enumerates it,
 	// and refreshes each state with the current cloud provider's view of it.
-	return deploy.NewRefreshSource(plugctx, proj, target, dryRun), nil
+	return deploy.NewRefreshSource(plugctx, proj, target, defaultProviderVersions, dryRun), nil
 }

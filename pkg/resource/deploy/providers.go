@@ -56,6 +56,8 @@ type providerLoader struct {
 func (p *providerLoader) loadProvider(urn resource.URN,
 	properties resource.PropertyMap) (plugin.Provider, []plugin.CheckFailure, error) {
 
+	logging.V(7).Infof("loading provider %v", urn)
+
 	// Extract the requested version from the properties if present.
 	var failures []plugin.CheckFailure
 	var version *semver.Version
@@ -189,6 +191,14 @@ func (p *metaProvider) loadProvider(urn resource.URN,
 	response := <-resp
 
 	return response.provider, response.failures, response.err
+}
+
+func (p *metaProvider) Close() error {
+	return nil
+}
+
+func (p *metaProvider) Pkg() tokens.Package {
+	return "pulumi-prioviders"
 }
 
 func (p *metaProvider) Configure(props map[config.Key]string) error {

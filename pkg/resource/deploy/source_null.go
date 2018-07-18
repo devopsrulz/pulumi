@@ -15,21 +15,35 @@
 package deploy
 
 import (
+	"github.com/blang/semver"
+
 	"github.com/pulumi/pulumi/pkg/tokens"
 )
 
-// NullSource is a singleton source that never returns any resources.  This may be used in scenarios where the "new"
+// A NullSource is a source that never returns any resources.  This may be used in scenarios where the "new"
 // version of the world is meant to be empty, either for testing purposes, or removal of an existing stack.
-var NullSource Source = &nullSource{}
+func NewNullSource(defaultProviderVersions map[tokens.Package]*semver.Version) Source {
+	return &nullSource{
+		defaultProviderVersions: defaultProviderVersions,
+	}
+}
 
 // A nullSource never returns any resources.
 type nullSource struct {
+	defaultProviderVersions map[tokens.Package]*semver.Version
 }
 
 func (src *nullSource) Close() error                { return nil }
 func (src *nullSource) Project() tokens.PackageName { return "" }
 func (src *nullSource) Info() interface{}           { return nil }
 func (src *nullSource) IsRefresh() bool             { return false }
+
+func (src *nullSource) DefaultProviderVersion(pkg tokens.Package) *semver.Version {
+	if v, ok := src.defaultProviderVersions[pkg]; ok {
+		return v
+	}
+	return nil
+}
 
 func (src *nullSource) Iterate(opts Options) (SourceIterator, error) {
 	return &nullSourceIterator{}, nil

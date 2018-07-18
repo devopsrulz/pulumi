@@ -17,6 +17,8 @@ package deploy
 import (
 	"io"
 
+	"github.com/blang/semver"
+
 	"github.com/pulumi/pulumi/pkg/resource"
 	"github.com/pulumi/pulumi/pkg/tokens"
 )

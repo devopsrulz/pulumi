@@ -15,8 +15,11 @@
 package engine
 
 import (
+	"github.com/blang/semver"
+
 	"github.com/pulumi/pulumi/pkg/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/resource/plugin"
+	"github.com/pulumi/pulumi/pkg/tokens"
 	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/workspace"
 )
@@ -47,15 +50,24 @@ func newDestroySource(
 	target *deploy.Target, plugctx *plugin.Context, dryRun bool) (deploy.Source, error) {
 
 	// For destroy, we consult the manifest for the plugin versions/ required to destroy it.
+	defaultProviderVersions := make(map[tokens.Package]*semver.Version)
 	if target != nil && target.Snapshot != nil {
 		// We don't need the language plugin, since destroy doesn't run code, so we will leave that out.
-		kinds := plugin.AllPlugins & ^plugin.LanguagePlugins
+		const kinds = plugin.AnalyzerPlugins
 		if err := plugctx.Host.EnsurePlugins(target.Snapshot.Manifest.Plugins, kinds); err != nil {
 			return nil, err
+		}
+
+		// Collect the version information for default providers.
+		for _, p := range target.Snapshot.Manifest.Plugins {
+			if p.Kind != workspace.ResourcePlugin {
+				continue
+			}
+			defaultProviderVersions[tokens.Package(p.Name)] = p.Version
 		}
 	}
 
 	// Create a nil source.  This simply returns "nothing" as the new state, which will cause the
 	// engine to destroy the entire existing state.
-	return deploy.NullSource, nil
+	return deploy.NewNullSource(defaultProviderVersions), nil
 }

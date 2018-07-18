@@ -20,7 +20,6 @@ import (
 	"github.com/pulumi/pulumi/pkg/diag"
 	"github.com/pulumi/pulumi/pkg/resource"
 	"github.com/pulumi/pulumi/pkg/resource/plugin"
-	"github.com/pulumi/pulumi/pkg/tokens"
 	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/util/logging"
 )
@@ -32,6 +31,8 @@ import (
 type stepGenerator struct {
 	plan *Plan   // the plan to which this step generator belongs
 	opts Options // options for this step generator
+
+	metaProvider *metaProvider
 
 	urns     map[resource.URN]bool // set of URNs discovered for this plan
 	deletes  map[resource.URN]bool // set of URNs deleted in this plan
@@ -76,7 +77,9 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, err
 	var prov plugin.Provider
 	var err error
 	if goal.Custom {
-		if prov, err = sg.provider(goal.Type); err != nil {
+		if goal.Type.Package() == "pulumi-providers" {
+			prov = sg.metaProvider
+		} else if prov, err = sg.provider(goal); err != nil {
 			return nil, err
 		}
 	}
@@ -430,13 +433,13 @@ func (sg *stepGenerator) issueCheckErrors(new *resource.State, urn resource.URN,
 
 // Provider fetches the provider for a given resource type, possibly lazily allocating the plugins for it.  If a
 // provider could not be found, or an error occurred while creating it, a non-nil error is returned.
-func (sg *stepGenerator) provider(t tokens.Type) (plugin.Provider, error) {
-	pkg := t.Package()
-	prov, err := sg.plan.Provider(pkg)
+func (sg *stepGenerator) provider(g *resource.Goal) (plugin.Provider, error) {
+	contract.Require(g.Provider != "", "g")
+
+	prov, err := sg.metaProvider.getProvider(g.Provider)
 	if err != nil {
-		return nil, err
-	} else if prov == nil {
-		return nil, errors.Errorf("could not load resource provider for package '%v' from $PATH", pkg)
+		return nil,
+			errors.Errorf("error fetching provider %v for resource %v: %v", g.Provider, sg.plan.generateURN(g), err)
 	}
 	return prov, nil
 }
@@ -448,10 +451,11 @@ func (sg *stepGenerator) Replaces() map[resource.URN]bool { return sg.replaces }
 func (sg *stepGenerator) Deletes() map[resource.URN]bool  { return sg.deletes }
 
 // newStepGenerator creates a new step generator that operates on the given plan.
-func newStepGenerator(plan *Plan, opts Options) *stepGenerator {
+func newStepGenerator(plan *Plan, meta *metaProvider, opts Options) *stepGenerator {
 	return &stepGenerator{
 		plan:     plan,
 		opts:     opts,
+		metaProvider: meta,
 		urns:     make(map[resource.URN]bool),
 		creates:  make(map[resource.URN]bool),
 		sames:    make(map[resource.URN]bool),
