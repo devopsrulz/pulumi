@@ -116,8 +116,8 @@ func (p *Plan) generateURN(g *resource.Goal) resource.URN {
 	return resource.NewURN(p.Target().Name, p.source.Project(), parentType, g.Type, g.Name)
 }
 
-// defaultProviderURN generates the URN for the global provider given a type.
-func (p *Plan) defaultProviderURN(t tokens.Type) resource.URN {
-	providerType := tokens.Type("pulumi-providers:providers:" + t.Package())
+// defaultProviderURN generates the URN for the global provider given a package.
+func (p *Plan) defaultProviderURN(pkg tokens.Package) resource.URN {
+	providerType := tokens.Type("pulumi-providers:providers:" + pkg)
 	return resource.NewURN(p.Target().Name, p.source.Project(), "", providerType, "default")
 }

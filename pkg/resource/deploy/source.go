@@ -20,6 +20,7 @@ import (
 	"github.com/blang/semver"
 
 	"github.com/pulumi/pulumi/pkg/resource"
+	"github.com/pulumi/pulumi/pkg/resource/plugin"
 	"github.com/pulumi/pulumi/pkg/tokens"
 )
 
@@ -53,6 +54,20 @@ type SourceIterator interface {
 // program, and it is the responsibility of the engine to make it so.
 type SourceEvent interface {
 	event()
+}
+
+// InvokeEvent is an event that asks the engine to invoke a method on a resource provider.
+type InvokeEvent interface {
+	SourceEvent
+
+	// Provider returns the URN of the provider to use for the invoke.
+	Provider() resource.URN
+	// Token returns the token of the method to invoke.
+	Token() tokens.ModuleMember
+	// Arguments returns the arguments to the method to invoke.
+	Arguments() resource.PropertyMap
+	// Done indicates that the invoke has completed.
+	Done(result resource.PropertyMap, failures []plugin.CheckFailure, err error)
 }
 
 // RegisterResourceEvent is a step that asks the engine to provision a resource.
