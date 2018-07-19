@@ -33,7 +33,7 @@ type Goal struct {
 
 // NewGoal allocates a new resource goal state.
 func NewGoal(t tokens.Type, name tokens.QName, custom bool, props PropertyMap,
-	parent URN, protect bool, dependencies []URN) *Goal {
+	parent URN, protect bool, provider URN, dependencies []URN) *Goal {
 	return &Goal{
 		Type:         t,
 		Name:         name,
@@ -41,6 +41,7 @@ func NewGoal(t tokens.Type, name tokens.QName, custom bool, props PropertyMap,
 		Properties:   props,
 		Parent:       parent,
 		Protect:      protect,
+		Provider:     provider,
 		Dependencies: dependencies,
 	}
 }

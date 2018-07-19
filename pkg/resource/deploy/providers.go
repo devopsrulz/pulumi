@@ -29,7 +29,13 @@ import (
 	"github.com/pulumi/pulumi/pkg/workspace"
 )
 
-var errMissingProvider = errors.New("provider not found")
+var ErrMissingProvider = errors.New("provider not found")
+
+// ProviderSource allows access to providers at runtime.
+type ProviderSource interface {
+	// GetProvider returns the provider plugin for the given URN.
+	GetProvider(urn resource.URN) (plugin.Provider, error)
+}
 
 type providerLoadResponse struct {
 	provider plugin.Provider
@@ -132,7 +138,7 @@ func (p *providerLoader) serve(requests <-chan providerLoadRequest) {
 		record, ok := p.providers[req.urn]
 		if req.properties == nil {
 			if !ok {
-				req.response <- providerLoadResponse{err: errMissingProvider}
+				req.response <- providerLoadResponse{err: ErrMissingProvider}
 			} else {
 				req.response <- providerLoadResponse{provider: record.provider}
 			}

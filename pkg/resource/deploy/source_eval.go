@@ -90,13 +90,11 @@ func (src *evalSource) DefaultProviderVersion(pkg tokens.Package) *semver.Versio
 }
 
 // Iterate will spawn an evaluator coroutine and prepare to interact with it on subsequent calls to Next.
-func (src *evalSource) Iterate(opts Options) (SourceIterator, error) {
+func (src *evalSource) Iterate(opts Options, providers ProviderSource) (SourceIterator, error) {
 	// First, fire up a resource monitor that will watch for and record resource creation.
-	invokeChan := make(chan *invokeEvent)
-	readChan := make(chan *readEvent)
-	regChan := make(chan *registerResourceEvent)
+	regChan := make(chan RegisterResourceEvent)
 	regOutChan := make(chan *registerResourceOutputsEvent)
-	mon, err := newResourceMonitor(src, invokeChan, regChan, regOutChan)
+	mon, err := newResourceMonitor(src, providers, regChan, regOutChan)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start resource monitor")
 	}
@@ -105,8 +103,6 @@ func (src *evalSource) Iterate(opts Options) (SourceIterator, error) {
 	iter := &evalSourceIterator{
 		mon:        mon,
 		src:        src,
-		invokeChan: invokeChan,
-		readChan:   readChan,
 		regChan:    regChan,
 		regOutChan: regOutChan,
 		finChan:    make(chan error),
@@ -123,9 +119,7 @@ func (src *evalSource) Iterate(opts Options) (SourceIterator, error) {
 type evalSourceIterator struct {
 	mon        *resmon                            // the resource monitor, per iterator.
 	src        *evalSource                        // the owning eval source object.
-	invokeChan chan *invokeEvent                  // the channel that contains invoke requests.
-	readChan   chan *readEvent                    // the channel that contains read requests.
-	regChan    chan *registerResourceEvent        // the channel that contains resource registrations.
+	regChan    chan RegisterResourceEvent         // the channel that contains resource registrations.
 	regOutChan chan *registerResourceOutputsEvent // the channel that contains resource completions.
 	finChan    chan error                         // the channel that communicates completion.
 	done       bool                               // set to true when the evaluation is done.
@@ -144,14 +138,6 @@ func (iter *evalSourceIterator) Next() (SourceEvent, error) {
 
 	// Await the program to compute some more state and then inspect what it has to say.
 	select {
-	case invoke := <-iter.invokeChan:
-		contract.Assert(invoke != nil)
-		logging.V(5).Infof("EvalSourceIterator produced an invocation: tok=%s", invoke.token)
-		return invoke, nil
-	case read := <-iter.invokeChan:
-		contract.Assert(read != nil)
-		logging.V(5).Infof("EvalSourceIterator produced a read: urn=%s,id=%s", read.urn, read.id)
-		return read, nil
 	case reg := <-iter.regChan:
 		contract.Assert(reg != nil)
 		goal := reg.Goal()
@@ -222,28 +208,116 @@ func (iter *evalSourceIterator) forkRun(opts Options) {
 	}()
 }
 
+type defaultProviderResponse struct {
+	urn resource.URN
+	err error
+}
+
+type defaultProviderRequest struct {
+	pkg tokens.Package
+	response chan<- defaultProviderResponse
+}
+
+type defaultProviders struct {
+	versions  map[tokens.Package]*semver.Version
+	providers map[tokens.Package]resource.URN
+	config    plugin.ConfigSource
+
+	requests chan defaultProviderRequest
+	regChan  chan<- RegisterResourceEvent
+	cancel   <-chan bool
+}
+
+func (d *defaultProviders) newRegisterDefaultProviderEvent(
+	pkg tokens.Package) (RegisterResourceEvent, <-chan *RegisterResult, error) {
+
+	// Attempt to get the config for the package.
+	cfg, err := d.config.GetPackageConfig(pkg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create the result channel and the event.
+	done := make(chan *RegisterResult)
+	event := newRegisterDefaultProviderEvent(pkg, cfg, d.versions[pkg], done)
+	return event, done, nil
+}
+
+func (d *defaultProviders) serve() {
+	for req := range d.requests {
+		if urn, ok := d.providers[req.pkg]; ok {
+			req.response <- defaultProviderResponse{urn: urn}
+			continue
+		}
+
+		event, done, err := d.newRegisterDefaultProviderEvent(req.pkg)
+		if err != nil {
+			req.response <- defaultProviderResponse{err: err}
+			continue
+		}
+
+		d.regChan <- event
+
+		var result *RegisterResult
+		select {
+		case result = <-done:
+		case <-d.cancel:
+			return
+		}
+
+		urn := result.State.URN
+		d.providers[req.pkg] = urn
+		req.response <- defaultProviderResponse{urn: urn}
+	}
+}
+
+func (d *defaultProviders) getDefaultProviderURN(pkg tokens.Package) (resource.URN, error) {
+	response := make(chan defaultProviderResponse)
+	d.requests <- defaultProviderRequest{pkg: pkg, response: response}
+	res := <-response
+	return res.urn, res.err
+}
+
+
 // resmon implements the pulumirpc.ResourceMonitor interface and acts as the gateway between a language runtime's
 // evaluation of a program and the internal resource planning and deployment logic.
 type resmon struct {
 	src        *evalSource                        // the evaluation source.
-	invokeChan chan *invokeEvent                  // the channel to send invoke requests to.
-	regChan    chan *registerResourceEvent        // the channel to send resource registrations to.
+	providers        ProviderSource               // the provider source itself.
+	defaultProviders *defaultProviders            // the default provider manager.
+	regChan    chan RegisterResourceEvent        // the channel to send resource registrations to.
 	regOutChan chan *registerResourceOutputsEvent // the channel to send resource output registrations to.
 	addr       string                             // the address the host is listening on.
 	cancel     chan bool                          // a channel that can cancel the server.
 	done       chan error                         // a channel that resolves when the server completes.
+
 }
 
 // newResourceMonitor creates a new resource monitor RPC server.
-func newResourceMonitor(src *evalSource, invokeChan chan *invokeEvent, regChan chan *registerResourceEvent,
+func newResourceMonitor(src *evalSource, providers ProviderSource, regChan chan RegisterResourceEvent,
 	regOutChan chan *registerResourceOutputsEvent) (*resmon, error) {
+
+	// Create our cancellation channel.
+	cancel := make(chan bool)
+
+	// Create a new default provider manager.
+	d := &defaultProviders{
+		versions: src.defaultProviderVersions,
+		providers: make(map[tokens.Package]resource.URN),
+		config: src.runinfo.Target,
+		requests: make(chan defaultProviderRequest),
+		regChan: regChan,
+		cancel: cancel,
+	}
+
 	// New up an engine RPC server.
 	resmon := &resmon{
 		src:        src,
-		invokeChan: invokeChan,
+		providers: providers,
+		defaultProviders: d,
 		regChan:    regChan,
 		regOutChan: regOutChan,
-		cancel:     make(chan bool),
+		cancel:     cancel,
 	}
 
 	// Fire up a gRPC server and start listening for incomings.
@@ -276,9 +350,19 @@ func (rm *resmon) Cancel() error {
 
 // Invoke performs an invocation of a member located in a resource provider.
 func (rm *resmon) Invoke(ctx context.Context, req *pulumirpc.InvokeRequest) (*pulumirpc.InvokeResponse, error) {
-	// Communicate the invoke request to the iterator.
-
+	// Fetch the token and load up the resource provider if necessary.
 	tok := tokens.ModuleMember(req.GetTok())
+
+	// TODO: pull the provider URN from the request
+	providerURN, err := rm.defaultProviders.getDefaultProviderURN(tok.Package())
+	if err != nil {
+		return nil, err
+	}
+	prov, err := rm.providers.GetProvider(providerURN)
+	if err != nil {
+		return nil, err
+	}
+
 	label := fmt.Sprintf("ResourceMonitor.Invoke(%s)", tok)
 
 	args, err := plugin.UnmarshalProperties(
@@ -287,29 +371,9 @@ func (rm *resmon) Invoke(ctx context.Context, req *pulumirpc.InvokeRequest) (*pu
 		return nil, errors.Wrapf(err, "failed to unmarshal %v args", tok)
 	}
 
-	event := &invokeEvent{
-		token: tok,
-		arguments: args,
-		done: make(chan invokeResult),
-	}
-
-	select {
-	case rm.invokeChan <- event:
-	case <-rm.cancel:
-		logging.V(5).Infof("ResourceMonitor.Invoke operation canceled, tok=%s", tok)
-		return nil, rpcerror.New(codes.Unavailable, "resource monitor shut down while sending invoke request")
-	}
-
-	// Now block waiting for the invoke to finish.
-	var result invokeResult
-	select {
-	case result = <-event.done:
-	case <-rm.cancel:
-		logging.V(5).Infof("ResourceMonitor.Invoke operation canceled, tok=%s", tok)
-		return nil, rpcerror.New(codes.Unavailable, "resource monitor shut down while waiting on invoke request")
-	}
-
-	ret, failures, err := result.result, result.failures, result.err
+	// Do the invoke and then return the arguments.
+	logging.V(5).Infof("ResourceMonitor.Invoke received: tok=%v #args=%v", tok, len(args))
+	ret, failures, err := prov.Invoke(tok, args)
 	if err != nil {
 		return nil, errors.Wrapf(err, "invocation of %v returned an error", tok)
 	}
@@ -334,11 +398,15 @@ func (rm *resmon) ReadResource(ctx context.Context,
 	t := tokens.Type(req.GetType())
 	name := tokens.QName(req.GetName())
 	parent := resource.URN(req.GetParent())
-	prov, err := rm.src.plugctx.Host.Provider(t.Package(), nil)
+
+	// TODO: pull the provider URN from the request
+	providerURN, err := rm.defaultProviders.getDefaultProviderURN(t.Package())
 	if err != nil {
 		return nil, err
-	} else if prov == nil {
-		return nil, errors.Errorf("could not load resource provider for package '%v' from $PATH", t.Package())
+	}
+	prov, err := rm.providers.GetProvider(providerURN)
+	if err != nil {
+		return nil, err
 	}
 
 	// Manufacture a URN that is based on the program evaluation context.
@@ -390,6 +458,12 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 	parent := resource.URN(req.GetParent())
 	protect := req.GetProtect()
 
+	// TODO: pull the provider URN from the request
+	provider, err := rm.defaultProviders.getDefaultProviderURN(t.Package())
+	if err != nil {
+		return nil, err
+	}
+
 	dependencies := []resource.URN{}
 	for _, dependingURN := range req.GetDependencies() {
 		dependencies = append(dependencies, resource.URN(dependingURN))
@@ -407,7 +481,7 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 
 	// Send the goal state to the engine.
 	step := &registerResourceEvent{
-		goal: resource.NewGoal(t, name, custom, props, parent, protect, dependencies),
+		goal: resource.NewGoal(t, name, custom, props, parent, protect, provider, dependencies),
 		done: make(chan *RegisterResult),
 	}
 
@@ -496,47 +570,6 @@ func (rm *resmon) RegisterResourceOutputs(ctx context.Context,
 	logging.V(5).Infof(
 		"ResourceMonitor.RegisterResourceOutputs operation finished: urn=%v, #outs=%v", urn, len(outs))
 	return &pbempty.Empty{}, nil
-}
-
-type invokeResult struct {
-	result resource.PropertyMap
-	failures []plugin.CheckFailure
-	err error
-}
-
-type invokeEvent struct {
-	provider resource.URN
-	token tokens.ModuleMember
-	arguments resource.PropertyMap
-	done chan invokeResult
-}
-
-var _ InvokeEvent = (*invokeEvent)(nil)
-
-func (e *invokeEvent) event() {}
-
-func (e *invokeEvent) Provider() resource.URN {
-	return e.provider
-}
-
-func (e *invokeEvent) Token() tokens.ModuleMember {
-	return e.token
-}
-
-func (e *invokeEvent) Arguments() resource.PropertyMap {
-	return e.arguments
-}
-
-func (e *invokeEvent) Done(result resource.PropertyMap, failures []plugin.CheckFailure, err error) {
-	e.done <- invokeResult{
-		result: result,
-		failures: failures,
-		err: err,
-	}
-}
-
-type readResourceEvent struct {
-	
 }
 
 type registerResourceEvent struct {

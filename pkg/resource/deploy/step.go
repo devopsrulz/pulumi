@@ -56,6 +56,7 @@ func NewSameStep(plan *Plan, reg RegisterResourceEvent, old *resource.State, new
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
+	contract.Assert(new.Provider != "")
 	contract.Assert(!new.Delete)
 	return &SameStep{
 		plan: plan,
@@ -101,6 +102,7 @@ func NewCreateStep(plan *Plan, reg RegisterResourceEvent, new *resource.State) S
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
+	contract.Assert(new.Provider != "")
 	contract.Assert(!new.Delete)
 	return &CreateStep{
 		plan: plan,
@@ -119,6 +121,7 @@ func NewCreateReplacementStep(plan *Plan, reg RegisterResourceEvent,
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
+	contract.Assert(new.Provider != "")
 	contract.Assert(!new.Delete)
 	contract.Assert(old.Type == new.Type)
 	return &CreateStep{
@@ -201,6 +204,7 @@ func NewDeleteStep(plan *Plan, old *resource.State) Step {
 	contract.Assert(old != nil)
 	contract.Assert(old.URN != "")
 	contract.Assert(old.ID != "" || !old.Custom)
+	contract.Assert(old.Provider != "")
 	contract.Assert(!old.Delete)
 	return &DeleteStep{
 		plan: plan,
@@ -212,6 +216,7 @@ func NewDeleteReplacementStep(plan *Plan, old *resource.State, pendingDelete boo
 	contract.Assert(old != nil)
 	contract.Assert(old.URN != "")
 	contract.Assert(old.ID != "" || !old.Custom)
+	contract.Assert(old.Provider != "")
 	contract.Assert(!pendingDelete || old.Delete)
 	return &DeleteStep{
 		plan:      plan,
@@ -277,6 +282,7 @@ func NewUpdateStep(plan *Plan, reg RegisterResourceEvent, old *resource.State,
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
+	contract.Assert(new.Provider != "")
 	contract.Assert(!new.Delete)
 	contract.Assert(old.Type == new.Type)
 	return &UpdateStep{
@@ -480,5 +486,5 @@ func (op StepOp) Suffix() string {
 
 // getProvider fetches the provider for the given step.
 func getProvider(s Step) (plugin.Provider, error) {
-	return s.Plan().Provider(s.Type().Package())
+	return s.Plan().GetProvider(s.New().Provider)
 }

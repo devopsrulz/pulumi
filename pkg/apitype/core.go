@@ -42,6 +42,8 @@ const (
 	DeploymentSchemaVersionCurrent = 1
 )
 
+// TODO: break break break for provider info
+
 // We alias the latest versions of the various types below to their friendly names here.
 
 type Checkpoint = CheckpointV1
@@ -130,6 +132,8 @@ type ResourceV1 struct {
 	Protect bool `json:"protect,omitempty" yaml:"protect,omitempty"`
 	// Dependencies contains the dependency edges to other resources that this depends on.
 	Dependencies []resource.URN `json:"dependencies" yaml:"dependencies,omitempty"`
+	// Provider is the URN of this resource's provider.
+	Provider resource.URN `json:"provider" yaml:"provider,omitempty"`
 }
 
 // ResourceV2 is the second version of the Resource API type. It absorbs two breaking changes:

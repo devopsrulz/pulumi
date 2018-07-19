@@ -15,7 +15,6 @@
 package deploy
 
 import (
-	"github.com/blang/semver"
 	"github.com/pkg/errors"
 
 	"github.com/pulumi/pulumi/pkg/resource"
@@ -26,13 +25,11 @@ import (
 
 // NewRefreshSource returns a new source that generates events based on reading an existing checkpoint state,
 // combined with refreshing its associated resource state from the cloud provider.
-func NewRefreshSource(plugctx *plugin.Context, proj *workspace.Project, target *Target,
-	defaultProviderVersions map[tokens.Package]*semver.Version, dryRun bool) Source {
+func NewRefreshSource(plugctx *plugin.Context, proj *workspace.Project, target *Target, dryRun bool) Source {
 	return &refreshSource{
 		plugctx: plugctx,
 		proj:    proj,
 		target:  target,
-		defaultProviderVersions: defaultProviderVersions,
 		dryRun:  dryRun,
 	}
 }
@@ -42,7 +39,6 @@ type refreshSource struct {
 	plugctx *plugin.Context
 	proj    *workspace.Project
 	target  *Target
-	defaultProviderVersions map[tokens.Package]*semver.Version // the default provider verisons for this source.
 	dryRun  bool
 }
 
@@ -51,14 +47,7 @@ func (src *refreshSource) Project() tokens.PackageName { return src.proj.Name }
 func (src *refreshSource) Info() interface{}           { return nil }
 func (src *refreshSource) IsRefresh() bool             { return true }
 
-func (src *refreshSource) DefaultProviderVersion(pkg tokens.Package) *semver.Version {
-	if v, ok := src.defaultProviderVersions[pkg]; ok {
-		return v
-	}
-	return nil
-}
-
-func (src *refreshSource) Iterate(opts Options) (SourceIterator, error) {
+func (src *refreshSource) Iterate(opts Options, providers ProviderSource) (SourceIterator, error) {
 	var states []*resource.State
 	if snap := src.target.Snapshot; snap != nil {
 		states = snap.Resources
@@ -112,11 +101,11 @@ func (iter *refreshSourceIterator) newRefreshGoal(s *resource.State) (*resource.
 			return nil, nil // the resource was deleted.
 		}
 		s = resource.NewState(
-			s.Type, s.URN, s.Custom, s.Delete, s.ID, s.Inputs, refreshed, s.Parent, s.Protect, s.Dependencies)
+			s.Type, s.URN, s.Custom, s.Delete, s.ID, s.Inputs, refreshed, s.Parent, s.Protect, "", s.Dependencies)
 	}
 
 	// Now just return the actual state as the goal state.
-	return resource.NewGoal(s.Type, s.URN.Name(), s.Custom, s.Outputs, s.Parent, s.Protect, s.Dependencies), nil
+	return resource.NewGoal(s.Type, s.URN.Name(), s.Custom, s.Outputs, s.Parent, s.Protect, "", s.Dependencies), nil
 }
 
 type refreshSourceEvent struct {

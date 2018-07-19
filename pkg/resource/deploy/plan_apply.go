@@ -17,12 +17,9 @@ package deploy
 import (
 	"reflect"
 
-	"github.com/blang/semver"
 	"github.com/pkg/errors"
 
 	"github.com/pulumi/pulumi/pkg/resource"
-	"github.com/pulumi/pulumi/pkg/resource/config"
-	"github.com/pulumi/pulumi/pkg/tokens"
 	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/util/logging"
 )
@@ -43,19 +40,17 @@ type Events interface {
 // Start initializes and returns an iterator that can be used to step through a plan's individual steps.
 func (p *Plan) Start(opts Options) (*PlanIterator, error) {
 	// Ask the source for its iterator.
-	src, err := p.source.Iterate(opts)
+	src, err := p.source.Iterate(opts, p)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create an iterator that can be used to perform the planning process.
-	meta := newMetaProvider(p.ctx.Host)
 	return &PlanIterator{
 		p:            p,
 		opts:         opts,
 		src:          src,
-		stepGen:      newStepGenerator(p, meta, opts),
-		metaProvider: meta,
+		stepGen:      newStepGenerator(p, opts),
 		pendingNews:  make(map[resource.URN]Step),
 		dones:        make(map[*resource.State]bool),
 	}, nil
@@ -78,8 +73,6 @@ type PlanIterator struct {
 	opts    Options        // the options this iterator was created with.
 	src     SourceIterator // the iterator that fetches source resources.
 	stepGen *stepGenerator // the step generator for this plan.
-
-	metaProvider *metaProvider // the metaProvider to use for dealing with resource providers
 
 	pendingNews map[resource.URN]Step // a map of logical steps currently active.
 
@@ -165,32 +158,6 @@ func (iter *PlanIterator) Close() error {
 	return iter.src.Close()
 }
 
-func (iter *PlanIterator) getDefaultProvider(pkg tokens.Package, then func()) (resource.URN, []Step, error {
-	defaultProviderURN := iter.p.defaultProviderURN(pkg)
-	_, err := iter.metaProvider.getProvider(defaultProviderURN)
-	switch {
-	case err == nil:
-		return defaultProviderURN, nil, nil
-	case err != errMissingProvider:
-		return "", nil, err
-	}
-
-	cfg, cfgerr := iter.p.Target().GetPackageConfig(pkg)
-	if cfgerr != nil {
-		return "", nil, cfgerr
-	}
-
-	version := iter.p.source.DefaultProviderVersion(pkg)
-
-	event := newDefaultProviderEvent(defaultProviderURN, cfg, version, nil)
-	steps, err := iter.stepGen.GenerateSteps(event)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return defaultProviderURN, steps, nil
-}
-
 // Next advances the plan by a single step, and returns the next step to be performed.  In doing so, it will perform
 // evaluation of the program as much as necessary to determine the next step.  If there is no further action to be
 // taken, Next will return a nil step pointer.
@@ -208,47 +175,12 @@ outer:
 			} else if event != nil {
 				// If we have an event, drive the behavior based on which kind it is.
 				switch e := event.(type) {
-				case InvokeEvent:
-					provider := e.Provider()
-					if provider == "" {
-						then := func() { go iter.doInvoke(defaultProviderURN, e) }
-						defaultProviderURN, steps, err := iter.getDefaultProvider(e.Token().Package(), then)
-						if err != nil {
-							return nil, err
-						}
-						if steps != nil {
-							if len(steps) > 1 {
-								iter.stepqueue = steps[1:]
-							}
-							return steps[0], nil
-						}
-						provider = defaultProviderURN
-					}
-					go iter.doInvoke(provider, e)
-
-				case ReadResourceEvent:
-					
-
 				case RegisterResourceEvent:
-					var steps []Step
-
-					// Check this resource's provider property. If no such property is present, use the appropriate
-					// global provider. If that provider has not yet been instantiated, generate its steps and add them
-					// to the queue.
-					g := e.Goal()
-					if g.Custom && g.Type.Package() != "pulumi-providers" && g.Provider == "" {
-						g.Provider, steps, err = iter.getDefaultProvider(g.Type.Package(), nil)
-						if err != nil {
-							return nil, err
-						}
-					}
-
 					// If the intent is to register a resource, compute the plan steps necessary to do so.
-					eventSteps, steperr := iter.stepGen.GenerateSteps(e)
+					steps, steperr := iter.stepGen.GenerateSteps(e)
 					if steperr != nil {
 						return nil, steperr
 					}
-					steps = append(steps, eventSteps...)
 					contract.Assert(len(steps) > 0)
 					if len(steps) > 1 {
 						iter.stepqueue = steps[1:]
@@ -318,60 +250,4 @@ func (iter *PlanIterator) nextDeleteStep() Step {
 		return del
 	}
 	return nil
-}
-
-// doInvoke processes a single invoke event.
-func (iter *PlanIterator) doInvoke(providerURN resource.URN, e InvokeEvent) {
-	logging.V(5).Infof("doInvoke: tok=%s", e.Token())
-
-	// Fetch the resource provider.
-	prov, err := iter.metaProvider.getProvider(providerURN)
-	if err != nil {
-		e.Done(nil, nil, err)
-		return
-	}
-
-	// Perform the invoke.
-	result, failures, err := prov.Invoke(e.Token(), e.Arguments())
-	e.Done(result, failures, err)
-}
-
-type defaultProviderEvent struct {
-	g resource.Goal
-	then func()
-}
-
-func newDefaultProviderEvent(urn resource.URN, cfg map[config.Key]string,
-	version *semver.Version, then func()) *defaultProviderEvent {
-
-	properties := make(resource.PropertyMap)
-	for k, v := range cfg {
-		properties[resource.PropertyKey(k.Name())] = resource.NewStringProperty(v)
-	}
-
-	return &defaultProviderEvent {
-		g: resource.Goal{
-			Type: urn.Type(),
-			Name: urn.Name(),
-			Custom: true,
-			Properties: properties,
-			Parent: "",
-			Protect: false,
-			Provider: "",
-			Dependencies: nil,
-		},
-		then: then,
-	}
-}
-
-func (*defaultProviderEvent) event() {}
-
-func (e *defaultProviderEvent) Goal() *resource.Goal {
-	return &e.g
-}
-
-func (e *defaultProviderEvent) Done(_ *RegisterResult) {
-	if e.then != nil {
-		e.then()
-	}
 }

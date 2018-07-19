@@ -20,7 +20,7 @@ import (
 	"github.com/blang/semver"
 
 	"github.com/pulumi/pulumi/pkg/resource"
-	"github.com/pulumi/pulumi/pkg/resource/plugin"
+	"github.com/pulumi/pulumi/pkg/resource/config"
 	"github.com/pulumi/pulumi/pkg/tokens"
 )
 
@@ -32,14 +32,12 @@ type Source interface {
 	Project() tokens.PackageName
 	// Info returns a serializable payload that can be used to stamp snapshots for future reconciliation.
 	Info() interface{}
-	// DefaultProviderVersion fetches the default version for the given provider from the source.
-	DefaultProviderVersion(pkg tokens.Package) *semver.Version
 	// IsRefresh indicates whether this source returns events source from existing state (true), and hence can simply
 	// be assumed to reflect existing state, or whether the events should acted upon (false).
 	IsRefresh() bool
 
-	// Iterate begins iterating the source.  Error is non-nil upon failure; otherwise, a valid iterator is returned.
-	Iterate(opts Options) (SourceIterator, error)
+	// Iterate begins iterating the source. Error is non-nil upon failure; otherwise, a valid iterator is returned.
+	Iterate(opts Options, providers ProviderSource) (SourceIterator, error)
 }
 
 // A SourceIterator enumerates the list of resources that a source has to offer and tracks associated state.
@@ -54,20 +52,6 @@ type SourceIterator interface {
 // program, and it is the responsibility of the engine to make it so.
 type SourceEvent interface {
 	event()
-}
-
-// InvokeEvent is an event that asks the engine to invoke a method on a resource provider.
-type InvokeEvent interface {
-	SourceEvent
-
-	// Provider returns the URN of the provider to use for the invoke.
-	Provider() resource.URN
-	// Token returns the token of the method to invoke.
-	Token() tokens.ModuleMember
-	// Arguments returns the arguments to the method to invoke.
-	Arguments() resource.PropertyMap
-	// Done indicates that the invoke has completed.
-	Done(result resource.PropertyMap, failures []plugin.CheckFailure, err error)
 }
 
 // RegisterResourceEvent is a step that asks the engine to provision a resource.
@@ -95,4 +79,40 @@ type RegisterResourceOutputsEvent interface {
 	Outputs() resource.PropertyMap
 	// Done indicates that we are done with this step.  It must be called to perform cleanup associated with the step.
 	Done()
+}
+
+// registerDefaultProviderEvent is a special implementation of RegisterResourceEvent intended for registering default
+// providers.
+type registerDefaultProviderEvent struct {
+	goal *resource.Goal
+	done chan<- *RegisterResult
+}
+
+var _ RegisterResourceEvent = (*registerDefaultProviderEvent)(nil)
+
+func newRegisterDefaultProviderEvent(pkg tokens.Package, cfg map[config.Key]string,
+	version *semver.Version, done chan<- *RegisterResult) *registerDefaultProviderEvent {
+
+	properties := make(resource.PropertyMap)
+	for k, v := range cfg {
+		properties[resource.PropertyKey(k.Name())] = resource.NewStringProperty(v)
+	}
+
+	// TODO: get the parenting right
+
+	t := tokens.Type("pulumi-providers:provider:" + pkg)
+	return &registerDefaultProviderEvent {
+		goal: resource.NewGoal(t, "default", true, properties, "", false, "", nil),
+		done: done,
+	}
+}
+
+func (e *registerDefaultProviderEvent) event() {}
+
+func (e *registerDefaultProviderEvent) Goal() *resource.Goal {
+	return e.goal
+}
+
+func (e *registerDefaultProviderEvent) Done(r *RegisterResult) {
+	e.done <- r
 }

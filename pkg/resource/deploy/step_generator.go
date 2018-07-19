@@ -32,8 +32,6 @@ type stepGenerator struct {
 	plan *Plan   // the plan to which this step generator belongs
 	opts Options // options for this step generator
 
-	metaProvider *metaProvider
-
 	urns     map[resource.URN]bool // set of URNs discovered for this plan
 	deletes  map[resource.URN]bool // set of URNs deleted in this plan
 	replaces map[resource.URN]bool // set of URNs replaced in this plan
@@ -78,7 +76,7 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, err
 	var err error
 	if goal.Custom {
 		if goal.Type.Package() == "pulumi-providers" {
-			prov = sg.metaProvider
+			prov = sg.plan.metaProvider
 		} else if prov, err = sg.provider(goal); err != nil {
 			return nil, err
 		}
@@ -408,7 +406,7 @@ func (sg *stepGenerator) getResourcePropertyStates(urn resource.URN, goal *resou
 	}
 	return props, inputs, outputs,
 		resource.NewState(goal.Type, urn, goal.Custom, false, "",
-			inputs, outputs, goal.Parent, goal.Protect, goal.Dependencies)
+			inputs, outputs, goal.Parent, goal.Protect, goal.Provider, goal.Dependencies)
 
 }
 
@@ -436,7 +434,7 @@ func (sg *stepGenerator) issueCheckErrors(new *resource.State, urn resource.URN,
 func (sg *stepGenerator) provider(g *resource.Goal) (plugin.Provider, error) {
 	contract.Require(g.Provider != "", "g")
 
-	prov, err := sg.metaProvider.getProvider(g.Provider)
+	prov, err := sg.plan.GetProvider(g.Provider)
 	if err != nil {
 		return nil,
 			errors.Errorf("error fetching provider %v for resource %v: %v", g.Provider, sg.plan.generateURN(g), err)
@@ -451,11 +449,10 @@ func (sg *stepGenerator) Replaces() map[resource.URN]bool { return sg.replaces }
 func (sg *stepGenerator) Deletes() map[resource.URN]bool  { return sg.deletes }
 
 // newStepGenerator creates a new step generator that operates on the given plan.
-func newStepGenerator(plan *Plan, meta *metaProvider, opts Options) *stepGenerator {
+func newStepGenerator(plan *Plan, opts Options) *stepGenerator {
 	return &stepGenerator{
 		plan:     plan,
 		opts:     opts,
-		metaProvider: meta,
 		urns:     make(map[resource.URN]bool),
 		creates:  make(map[resource.URN]bool),
 		sames:    make(map[resource.URN]bool),

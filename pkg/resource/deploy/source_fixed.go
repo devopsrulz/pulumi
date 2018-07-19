@@ -40,7 +40,7 @@ func (src *fixedSource) DefaultProviderVersion(pkg tokens.Package) *semver.Versi
 	return nil
 }
 
-func (src *fixedSource) Iterate(opts Options) (SourceIterator, error) {
+func (src *fixedSource) Iterate(opts Options, providers ProviderSource) (SourceIterator, error) {
 	return &fixedSourceIterator{
 		src:     src,
 		current: -1,

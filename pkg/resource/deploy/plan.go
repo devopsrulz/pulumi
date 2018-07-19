@@ -38,6 +38,7 @@ type Plan struct {
 	analyzers []tokens.QName                   // the analyzers to run during this plan's generation.
 	preview   bool                             // true if this plan is to be previewed rather than applied.
 	depGraph  *graph.DependencyGraph           // the dependency graph of the old snapshot
+	metaProvider *metaProvider                 // the meta-provider that will manage this plan's provider plugins.
 }
 
 // NewPlan creates a new deployment plan from a resource snapshot plus a package to evaluate.
@@ -83,6 +84,7 @@ func NewPlan(ctx *plugin.Context, target *Target, prev *Snapshot, source Source,
 		analyzers: analyzers,
 		preview:   preview,
 		depGraph:  depGraph,
+		metaProvider: newMetaProvider(ctx.Host),
 	}
 }
 
@@ -98,12 +100,10 @@ func (p *Plan) SignalCancellation() error {
 	return p.ctx.Host.SignalCancellation()
 }
 
-// Provider fetches the provider for a given resource type, possibly lazily allocating the plugins for it.  If a
-// provider could not be found, or an error occurred while creating it, a non-nil error is returned.
-func (p *Plan) Provider(pkg tokens.Package) (plugin.Provider, error) {
-	// TODO: ideally we would flow versions on specific requests along to the underlying host function.  Absent that,
-	//     we will just pass nil, which returns us the most recent version available to us.
-	return p.ctx.Host.Provider(pkg, nil)
+// Provider fetches the resource provider with a given URN. If the provider could not be found, a non-nil error is
+// returned.
+func (p *Plan) GetProvider(urn resource.URN) (plugin.Provider, error) {
+	return p.metaProvider.getProvider(urn)
 }
 
 // generateURN generates a resource's URN from its goal state.
