@@ -22,6 +22,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/resource"
 	"github.com/pulumi/pulumi/pkg/resource/config"
 	"github.com/pulumi/pulumi/pkg/tokens"
+	"github.com/pulumi/pulumi/pkg/util/logging"
 )
 
 // A Source can generate a new set of resources that the planner will process accordingly.
@@ -114,5 +115,6 @@ func (e *registerDefaultProviderEvent) Goal() *resource.Goal {
 }
 
 func (e *registerDefaultProviderEvent) Done(r *RegisterResult) {
+	logging.V(7).Infof("default provider registration complete")
 	e.done <- r
 }

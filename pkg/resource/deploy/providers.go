@@ -129,6 +129,8 @@ func (p *providerLoader) loadProvider(urn resource.URN,
 		return nil, nil, err
 	}
 
+	logging.V(7).Infof("loaded provider %v", urn)
+
 	// Return the loaded and configured plugin.
 	return provider, nil, nil
 }
@@ -177,6 +179,8 @@ func newMetaProvider(host plugin.Host) *metaProvider {
 }
 
 func (p *metaProvider) getProvider(urn resource.URN) (plugin.Provider, error) {
+	logging.V(7).Infof("getting provider %v", urn)
+
 	provider, _, err := p.loadProvider(urn, nil)
 	return provider, err
 }
@@ -204,7 +208,7 @@ func (p *metaProvider) Close() error {
 }
 
 func (p *metaProvider) Pkg() tokens.Package {
-	return "pulumi-prioviders"
+	return "pulumi-providers"
 }
 
 func (p *metaProvider) Configure(props map[config.Key]string) error {

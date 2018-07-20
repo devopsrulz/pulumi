@@ -28,14 +28,15 @@ import (
 type Step interface {
 	Apply(preview bool) (resource.Status, error) // applies or previews this step.
 
-	Op() StepOp           // the operation performed by this step.
-	URN() resource.URN    // the resource URN (for before and after).
-	Type() tokens.Type    // the type affected by this step.
-	Old() *resource.State // the state of the resource before performing this step.
-	New() *resource.State // the state of the resource after performing this step.
-	Res() *resource.State // the latest state for the resource that is known (worst case, old).
-	Logical() bool        // true if this step represents a logical operation in the program.
-	Plan() *Plan          // the owning plan.
+	Op() StepOp            // the operation performed by this step.
+	URN() resource.URN     // the resource URN (for before and after).
+	Type() tokens.Type     // the type affected by this step.
+	Provider() resource.URN // the provider URN for this step.
+	Old() *resource.State  // the state of the resource before performing this step.
+	New() *resource.State  // the state of the resource after performing this step.
+	Res() *resource.State  // the latest state for the resource that is known (worst case, old).
+	Logical() bool         // true if this step represents a logical operation in the program.
+	Plan() *Plan           // the owning plan.
 }
 
 // SameStep is a mutating step that does nothing.
@@ -52,11 +53,11 @@ func NewSameStep(plan *Plan, reg RegisterResourceEvent, old *resource.State, new
 	contract.Assert(old != nil)
 	contract.Assert(old.URN != "")
 	contract.Assert(old.ID != "" || !old.Custom)
+	contract.Assert(!old.Custom || old.Provider != "" || old.Type.Package() == "pulumi-providers")
 	contract.Assert(!old.Delete)
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
-	contract.Assert(new.Provider != "")
 	contract.Assert(!new.Delete)
 	return &SameStep{
 		plan: plan,
@@ -66,14 +67,15 @@ func NewSameStep(plan *Plan, reg RegisterResourceEvent, old *resource.State, new
 	}
 }
 
-func (s *SameStep) Op() StepOp           { return OpSame }
-func (s *SameStep) Plan() *Plan          { return s.plan }
-func (s *SameStep) Type() tokens.Type    { return s.old.Type }
-func (s *SameStep) URN() resource.URN    { return s.old.URN }
-func (s *SameStep) Old() *resource.State { return s.old }
-func (s *SameStep) New() *resource.State { return s.new }
-func (s *SameStep) Res() *resource.State { return s.new }
-func (s *SameStep) Logical() bool        { return true }
+func (s *SameStep) Op() StepOp             { return OpSame }
+func (s *SameStep) Plan() *Plan            { return s.plan }
+func (s *SameStep) Type() tokens.Type      { return s.old.Type }
+func (s *SameStep) Provider() resource.URN { return s.old.Provider }
+func (s *SameStep) URN() resource.URN      { return s.old.URN }
+func (s *SameStep) Old() *resource.State   { return s.old }
+func (s *SameStep) New() *resource.State   { return s.new }
+func (s *SameStep) Res() *resource.State   { return s.new }
+func (s *SameStep) Logical() bool          { return true }
 
 func (s *SameStep) Apply(preview bool) (resource.Status, error) {
 	// Retain the URN, ID, and outputs:
@@ -102,7 +104,7 @@ func NewCreateStep(plan *Plan, reg RegisterResourceEvent, new *resource.State) S
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
-	contract.Assert(new.Provider != "")
+	contract.Assert(!new.Custom || new.Provider != "" || new.Type.Package() == "pulumi-providers")
 	contract.Assert(!new.Delete)
 	return &CreateStep{
 		plan: plan,
@@ -121,7 +123,7 @@ func NewCreateReplacementStep(plan *Plan, reg RegisterResourceEvent,
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
-	contract.Assert(new.Provider != "")
+	contract.Assert(!new.Custom || new.Provider != "" || new.Type.Package() == "pulumi-providers")
 	contract.Assert(!new.Delete)
 	contract.Assert(old.Type == new.Type)
 	return &CreateStep{
@@ -143,6 +145,7 @@ func (s *CreateStep) Op() StepOp {
 }
 func (s *CreateStep) Plan() *Plan                  { return s.plan }
 func (s *CreateStep) Type() tokens.Type            { return s.new.Type }
+func (s *CreateStep) Provider() resource.URN       { return s.new.Provider }
 func (s *CreateStep) URN() resource.URN            { return s.new.URN }
 func (s *CreateStep) Old() *resource.State         { return s.old }
 func (s *CreateStep) New() *resource.State         { return s.new }
@@ -204,7 +207,7 @@ func NewDeleteStep(plan *Plan, old *resource.State) Step {
 	contract.Assert(old != nil)
 	contract.Assert(old.URN != "")
 	contract.Assert(old.ID != "" || !old.Custom)
-	contract.Assert(old.Provider != "")
+	contract.Assert(!old.Custom || old.Provider != "" || old.Type.Package() == "pulumi-providers")
 	contract.Assert(!old.Delete)
 	return &DeleteStep{
 		plan: plan,
@@ -216,7 +219,7 @@ func NewDeleteReplacementStep(plan *Plan, old *resource.State, pendingDelete boo
 	contract.Assert(old != nil)
 	contract.Assert(old.URN != "")
 	contract.Assert(old.ID != "" || !old.Custom)
-	contract.Assert(old.Provider != "")
+	contract.Assert(!old.Custom || old.Provider != "" || old.Type.Package() == "pulumi-providers")
 	contract.Assert(!pendingDelete || old.Delete)
 	return &DeleteStep{
 		plan:      plan,
@@ -231,13 +234,14 @@ func (s *DeleteStep) Op() StepOp {
 	}
 	return OpDelete
 }
-func (s *DeleteStep) Plan() *Plan          { return s.plan }
-func (s *DeleteStep) Type() tokens.Type    { return s.old.Type }
-func (s *DeleteStep) URN() resource.URN    { return s.old.URN }
-func (s *DeleteStep) Old() *resource.State { return s.old }
-func (s *DeleteStep) New() *resource.State { return nil }
-func (s *DeleteStep) Res() *resource.State { return s.old }
-func (s *DeleteStep) Logical() bool        { return !s.replacing }
+func (s *DeleteStep) Plan() *Plan            { return s.plan }
+func (s *DeleteStep) Type() tokens.Type      { return s.old.Type }
+func (s *DeleteStep) Provider() resource.URN { return s.old.Provider }
+func (s *DeleteStep) URN() resource.URN      { return s.old.URN }
+func (s *DeleteStep) Old() *resource.State   { return s.old }
+func (s *DeleteStep) New() *resource.State   { return nil }
+func (s *DeleteStep) Res() *resource.State   { return s.old }
+func (s *DeleteStep) Logical() bool          { return !s.replacing }
 
 func (s *DeleteStep) Apply(preview bool) (resource.Status, error) {
 	// Refuse to delete protected resources.
@@ -278,11 +282,11 @@ func NewUpdateStep(plan *Plan, reg RegisterResourceEvent, old *resource.State,
 	contract.Assert(old != nil)
 	contract.Assert(old.URN != "")
 	contract.Assert(old.ID != "" || !old.Custom)
+	contract.Assert(!old.Custom || old.Provider != "" || old.Type.Package() == "pulumi-providers")
 	contract.Assert(!old.Delete)
 	contract.Assert(new != nil)
 	contract.Assert(new.URN != "")
 	contract.Assert(new.ID == "")
-	contract.Assert(new.Provider != "")
 	contract.Assert(!new.Delete)
 	contract.Assert(old.Type == new.Type)
 	return &UpdateStep{
@@ -294,14 +298,15 @@ func NewUpdateStep(plan *Plan, reg RegisterResourceEvent, old *resource.State,
 	}
 }
 
-func (s *UpdateStep) Op() StepOp           { return OpUpdate }
-func (s *UpdateStep) Plan() *Plan          { return s.plan }
-func (s *UpdateStep) Type() tokens.Type    { return s.old.Type }
-func (s *UpdateStep) URN() resource.URN    { return s.old.URN }
-func (s *UpdateStep) Old() *resource.State { return s.old }
-func (s *UpdateStep) New() *resource.State { return s.new }
-func (s *UpdateStep) Res() *resource.State { return s.new }
-func (s *UpdateStep) Logical() bool        { return true }
+func (s *UpdateStep) Op() StepOp             { return OpUpdate }
+func (s *UpdateStep) Plan() *Plan            { return s.plan }
+func (s *UpdateStep) Type() tokens.Type      { return s.old.Type }
+func (s *UpdateStep) Provider() resource.URN { return s.old.Provider }
+func (s *UpdateStep) URN() resource.URN      { return s.old.URN }
+func (s *UpdateStep) Old() *resource.State   { return s.old }
+func (s *UpdateStep) New() *resource.State   { return s.new }
+func (s *UpdateStep) Res() *resource.State   { return s.new }
+func (s *UpdateStep) Logical() bool          { return true }
 
 func (s *UpdateStep) Apply(preview bool) (resource.Status, error) {
 	// Always propagate the URN and ID, even in previews and refreshes.
@@ -378,6 +383,7 @@ func NewReplaceStep(plan *Plan, old *resource.State, new *resource.State,
 func (s *ReplaceStep) Op() StepOp                   { return OpReplace }
 func (s *ReplaceStep) Plan() *Plan                  { return s.plan }
 func (s *ReplaceStep) Type() tokens.Type            { return s.old.Type }
+func (s *ReplaceStep) Provider() resource.URN       { return "" }
 func (s *ReplaceStep) URN() resource.URN            { return s.old.URN }
 func (s *ReplaceStep) Old() *resource.State         { return s.old }
 func (s *ReplaceStep) New() *resource.State         { return s.new }
@@ -486,5 +492,8 @@ func (op StepOp) Suffix() string {
 
 // getProvider fetches the provider for the given step.
 func getProvider(s Step) (plugin.Provider, error) {
-	return s.Plan().GetProvider(s.New().Provider)
+	if s.Type().Package() == "pulumi-providers" {
+		return s.Plan().metaProvider, nil
+	}
+	return s.Plan().GetProvider(s.Provider())
 }

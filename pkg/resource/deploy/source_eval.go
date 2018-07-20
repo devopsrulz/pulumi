@@ -82,13 +82,6 @@ func (src *evalSource) Stack() tokens.QName {
 func (src *evalSource) Info() interface{} { return src.runinfo }
 func (src *evalSource) IsRefresh() bool   { return false }
 
-func (src *evalSource) DefaultProviderVersion(pkg tokens.Package) *semver.Version {
-	if v, ok := src.defaultProviderVersions[pkg]; ok {
-		return v
-	}
-	return nil
-}
-
 // Iterate will spawn an evaluator coroutine and prepare to interact with it on subsequent calls to Next.
 func (src *evalSource) Iterate(opts Options, providers ProviderSource) (SourceIterator, error) {
 	// First, fire up a resource monitor that will watch for and record resource creation.
@@ -245,33 +238,43 @@ func (d *defaultProviders) newRegisterDefaultProviderEvent(
 
 func (d *defaultProviders) serve() {
 	for req := range d.requests {
-		if urn, ok := d.providers[req.pkg]; ok {
-			req.response <- defaultProviderResponse{urn: urn}
-			continue
+		logging.V(5).Infof("handling default provider request for package %s", req.pkg)
+
+		urn, ok := d.providers[req.pkg]
+		if !ok {
+			logging.V(5).Infof("registering default provider for package %s", req.pkg)
+
+			event, done, err := d.newRegisterDefaultProviderEvent(req.pkg)
+			if err != nil {
+				req.response <- defaultProviderResponse{err: err}
+				continue
+			}
+
+			d.regChan <- event
+
+			logging.V(5).Infof("waiting for default provider for package %s", req.pkg)
+
+			var result *RegisterResult
+			select {
+			case result = <-done:
+			case <-d.cancel:
+				return
+			}
+
+			logging.V(5).Infof("registered default provider for package %s: %s", req.pkg, result.State.URN)
+
+			urn = result.State.URN
+			d.providers[req.pkg] = urn
 		}
-
-		event, done, err := d.newRegisterDefaultProviderEvent(req.pkg)
-		if err != nil {
-			req.response <- defaultProviderResponse{err: err}
-			continue
-		}
-
-		d.regChan <- event
-
-		var result *RegisterResult
-		select {
-		case result = <-done:
-		case <-d.cancel:
-			return
-		}
-
-		urn := result.State.URN
-		d.providers[req.pkg] = urn
 		req.response <- defaultProviderResponse{urn: urn}
+
+		logging.V(5).Infof("handled default provider request for pacakge %s: %s", req.pkg, urn)
 	}
 }
 
 func (d *defaultProviders) getDefaultProviderURN(pkg tokens.Package) (resource.URN, error) {
+	contract.Assert(pkg != "pulumi-providers")
+
 	response := make(chan defaultProviderResponse)
 	d.requests <- defaultProviderRequest{pkg: pkg, response: response}
 	res := <-response
@@ -334,6 +337,8 @@ func newResourceMonitor(src *evalSource, providers ProviderSource, regChan chan 
 	resmon.addr = fmt.Sprintf("127.0.0.1:%d", port)
 	resmon.done = done
 
+	go d.serve()
+
 	return resmon, nil
 }
 
@@ -354,9 +359,13 @@ func (rm *resmon) Invoke(ctx context.Context, req *pulumirpc.InvokeRequest) (*pu
 	tok := tokens.ModuleMember(req.GetTok())
 
 	// TODO: pull the provider URN from the request
-	providerURN, err := rm.defaultProviders.getDefaultProviderURN(tok.Package())
-	if err != nil {
-		return nil, err
+	providerURN := resource.URN(req.GetProvider())
+	if tok.Package() != "pulumi-providers" && providerURN == "" {
+		p, err := rm.defaultProviders.getDefaultProviderURN(tok.Package())
+		if err != nil {
+			return nil, err
+		}
+		providerURN = p
 	}
 	prov, err := rm.providers.GetProvider(providerURN)
 	if err != nil {
@@ -399,10 +408,13 @@ func (rm *resmon) ReadResource(ctx context.Context,
 	name := tokens.QName(req.GetName())
 	parent := resource.URN(req.GetParent())
 
-	// TODO: pull the provider URN from the request
-	providerURN, err := rm.defaultProviders.getDefaultProviderURN(t.Package())
-	if err != nil {
-		return nil, err
+	providerURN := resource.URN(req.GetProvider())
+	if t.Package() != "pulumi-providers" && providerURN == "" {
+		p, err := rm.defaultProviders.getDefaultProviderURN(t.Package())
+		if err != nil {
+			return nil, err
+		}
+		providerURN = p
 	}
 	prov, err := rm.providers.GetProvider(providerURN)
 	if err != nil {
@@ -458,10 +470,13 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 	parent := resource.URN(req.GetParent())
 	protect := req.GetProtect()
 
-	// TODO: pull the provider URN from the request
-	provider, err := rm.defaultProviders.getDefaultProviderURN(t.Package())
-	if err != nil {
-		return nil, err
+	provider := resource.URN(req.GetProvider())
+	if custom && t.Package() != "pulumi-providers" && provider == "" {
+		prov, err := rm.defaultProviders.getDefaultProviderURN(t.Package())
+		if err != nil {
+			return nil, err
+		}
+		provider = prov
 	}
 
 	dependencies := []resource.URN{}
@@ -476,8 +491,8 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 	}
 
 	logging.V(5).Infof(
-		"ResourceMonitor.RegisterResource received: t=%v, name=%v, custom=%v, #props=%v, parent=%v, protect=%v, deps=%v",
-		t, name, custom, len(props), parent, protect, dependencies)
+		"ResourceMonitor.RegisterResource received: t=%v, name=%v, custom=%v, #props=%v, parent=%v, protect=%v, provider=%v, deps=%v",
+		t, name, custom, len(props), parent, protect, provider, dependencies)
 
 	// Send the goal state to the engine.
 	step := &registerResourceEvent{

@@ -14,7 +14,7 @@
 
 import * as grpc from "grpc";
 import * as log from "../log";
-import { Inputs } from "../resource";
+import { Inputs, Resource, URN } from "../resource";
 import { debuggablePromise } from "./debuggable";
 import { deserializeProperties, serializeProperties } from "./rpc";
 import { excessiveDebugOutput, getMonitor, rpcKeepAlive, serialize } from "./settings";
@@ -27,7 +27,7 @@ const resproto = require("../proto/resource_pb.js");
  * can be a bag of computed values (Ts or Promise<T>s), and the result is a Promise<any> that
  * resolves when the invoke finishes.
  */
-export async function invoke(tok: string, props: Inputs): Promise<any> {
+export async function invoke(tok: string, props: Inputs, provider?: Resource): Promise<any> {
     log.debug(`Invoking function: tok=${tok}` +
         excessiveDebugOutput ? `, props=${JSON.stringify(props)}` : ``);
 
@@ -38,12 +38,18 @@ export async function invoke(tok: string, props: Inputs): Promise<any> {
             await serializeProperties(`invoke:${tok}`, props));
         log.debug(`Invoke RPC prepared: tok=${tok}` + excessiveDebugOutput ? `, obj=${JSON.stringify(obj)}` : ``);
 
+        let providerURN: URN | undefined;
+        if (provider) {
+            providerURN = await provider.urn.promise();
+        }
+
         // Fetch the monitor and make an RPC request.
         const monitor: any = getMonitor();
 
         const req = new resproto.InvokeRequest();
         req.setTok(tok);
         req.setArgs(obj);
+        req.setProvider(providerURN);
         const resp: any = await debuggablePromise(new Promise((innerResolve, innerReject) =>
             monitor.invoke(req, (err: grpc.StatusObject, innerResponse: any) => {
                 log.debug(`Invoke RPC finished: tok=${tok}; err: ${err}, resp: ${innerResponse}`);

@@ -40,6 +40,8 @@ interface ResourceResolverOperation {
     resolvers: OutputResolvers;
     // A parent URN, fully resolved, if any.
     parentURN: URN | undefined;
+    // A provider URN, fully resolved, if any.
+    providerURN: URN | undefined;
     // All serialized properties, fully awaited, serialized, and ready to go.
     serializedProps: Record<string, any>;
     // A set of dependency URNs that this resource is dependent upon (both implicitly and explicitly).
@@ -72,6 +74,7 @@ export function readResource(res: Resource, t: string, name: string, props: Inpu
         req.setName(name);
         req.setId(resolvedID);
         req.setParent(resop.parentURN);
+        req.setProvider(resop.providerURN);
         req.setProperties(gstruct.Struct.fromJavaScript(resop.serializedProps));
 
         // Now run the operation, serializing the invocation if necessary.
@@ -120,6 +123,7 @@ export function registerResource(res: Resource, t: string, name: string, custom:
         req.setCustom(custom);
         req.setObject(gstruct.Struct.fromJavaScript(resop.serializedProps));
         req.setProtect(opts.protect);
+        req.setProvider(resop.providerURN);
         req.setDependenciesList(Array.from(resop.dependencies));
 
         // Now run the operation, serializing the invocation if necessary.
@@ -215,6 +219,11 @@ async function prepareResource(label: string, res: Resource, custom: boolean,
         parentURN = await opts.parent.urn.promise();
     }
 
+    let providerURN: URN | undefined;
+    if (opts.provider) {
+        providerURN = await opts.provider.urn.promise();
+    }
+
     const dependencies: Set<URN> = new Set<URN>(explicitURNDeps);
     for (const implicitDep of implicitDependencies) {
         dependencies.add(await implicitDep.urn.promise());
@@ -226,6 +235,7 @@ async function prepareResource(label: string, res: Resource, custom: boolean,
         resolvers: resolvers,
         serializedProps: serializedProps,
         parentURN: parentURN,
+        providerURN: providerURN,
         dependencies: dependencies,
     };
 }
