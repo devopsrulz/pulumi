@@ -55,7 +55,7 @@ func (p *Plan) Start(opts Options) (*PlanIterator, error) {
 	for urn, res := range p.olds {
 		pkg := urn.Type().Package()
 		if pkg == "pulumi-providers" {
-			provider, failures, err := loadProvider(p.ctx.Host, urn, res.Inputs)
+			provider, failures, err := loadProvider(p.ctx.Host, urn, res.Inputs, false)
 			if err != nil {
 				return nil, err
 			}

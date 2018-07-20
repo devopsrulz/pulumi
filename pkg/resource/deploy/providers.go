@@ -39,28 +39,6 @@ type ProviderSource interface {
 	GetProvider(urn resource.URN) (plugin.Provider, error)
 }
 
-type providerLoadResponse struct {
-	provider plugin.Provider
-	failures []plugin.CheckFailure
-	err      error
-}
-
-type providerLoadRequest struct {
-	urn        resource.URN
-	properties resource.PropertyMap
-	response   chan<- providerLoadResponse
-}
-
-type providerRecord struct {
-	properties resource.PropertyMap
-	provider   plugin.Provider
-}
-
-type providerLoader struct {
-	host      plugin.Host
-	providers map[resource.URN]providerRecord // the map from plugin URN to plugin instance.
-}
-
 func loadProviderRaw(host plugin.Host, pkg tokens.Package, version *semver.Version,
 	cfg map[config.Key]string) (plugin.Provider, error) {
 
@@ -69,7 +47,7 @@ func loadProviderRaw(host plugin.Host, pkg tokens.Package, version *semver.Versi
 		return nil, err
 	}
 
-	// Attempt to configure the plugin. If configuration fails, discard the loaded plugin.
+	// If we have config, attempt to configure the plugin. If configuration fails, discard the loaded plugin.
 	if err = provider.Configure(cfg); err != nil {
 		closeErr := host.CloseProvider(provider)
 		if closeErr != nil {
@@ -82,7 +60,7 @@ func loadProviderRaw(host plugin.Host, pkg tokens.Package, version *semver.Versi
 }
 
 func loadProvider(host plugin.Host, urn resource.URN,
-	properties resource.PropertyMap) (plugin.Provider, []plugin.CheckFailure, error) {
+	properties resource.PropertyMap, allowUnknowns bool) (plugin.Provider, []plugin.CheckFailure, error) {
 
 	logging.V(7).Infof("loading provider %v", urn)
 
@@ -108,6 +86,7 @@ func loadProvider(host plugin.Host, urn resource.URN,
 	}
 
 	// Convert the property map to a provider config map, removing reserved properties.
+	useShim := false
 	cfg := make(map[config.Key]string)
 	for k, v := range properties {
 		if k == "version" {
@@ -116,10 +95,14 @@ func loadProvider(host plugin.Host, urn resource.URN,
 
 		switch {
 		case v.IsComputed():
-			failures = append(failures, plugin.CheckFailure{
-				Property: k,
-				Reason:   "provider properties must not be unknown",
-			})
+			if !allowUnknowns {
+				failures = append(failures, plugin.CheckFailure{
+					Property: k,
+					Reason:   "provider properties must not be unknown",
+				})
+			} else {
+				useShim = true
+			}
 		case v.IsString():
 			key := config.MustMakeKey(string(urn.Type().Name()), string(k))
 			cfg[key] = v.StringValue()
@@ -136,16 +119,37 @@ func loadProvider(host plugin.Host, urn resource.URN,
 		return nil, failures, nil
 	}
 
-	// Load the plugin.
-	provider, err := loadProviderRaw(host, tokens.Package(urn.Type().Name()), version, cfg)
+	// If we're not using the shim, attempt to load and configure the provider.
+	pkg := tokens.Package(urn.Type().Name())
+	if !useShim {
+		// Load the plugin.
+		provider, err := loadProviderRaw(host, pkg, version, cfg)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		logging.V(7).Infof("loaded provider %v", urn)
+		return provider, nil, nil
+	}
+
+	// Otherwise, load the provider, get its info, and construct an appropriate shim.
+	provider, err := host.Provider(pkg, version)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { contract.IgnoreError(host.CloseProvider(provider)) }()
+
+	info, err := provider.GetPluginInfo()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	logging.V(7).Infof("loaded provider %v", urn)
+	shim := &shimProvider{
+		pkg: pkg,
+		info: info,
+	}
 
-	// Return the loaded and configured plugin.
-	return provider, nil, nil
+	return shim, nil, nil
 }
 
 func getErrorForCheckFailure(res *resource.State, failure plugin.CheckFailure) error {
@@ -168,6 +172,29 @@ func getErrorForCheckFailures(res *resource.State, failures []plugin.CheckFailur
 	return err
 }
 
+type providerLoadResponse struct {
+	provider plugin.Provider
+	failures []plugin.CheckFailure
+	err      error
+}
+
+type providerLoadRequest struct {
+	urn        resource.URN
+	properties resource.PropertyMap
+	allowUnknowns bool
+	response   chan<- providerLoadResponse
+}
+
+type providerRecord struct {
+	properties resource.PropertyMap
+	provider   plugin.Provider
+}
+
+type providerLoader struct {
+	host      plugin.Host
+	providers map[resource.URN]providerRecord // the map from plugin URN to plugin instance.
+}
+
 func (p *providerLoader) serve(requests <-chan providerLoadRequest) {
 	for req := range requests {
 		record, ok := p.providers[req.urn]
@@ -179,7 +206,7 @@ func (p *providerLoader) serve(requests <-chan providerLoadRequest) {
 			}
 		} else {
 			contract.Assert(!ok)
-			provider, failures, err := loadProvider(p.host, req.urn, req.properties)
+			provider, failures, err := loadProvider(p.host, req.urn, req.properties, req.allowUnknowns)
 			if len(failures) == 0 && err == nil {
 				p.providers[req.urn] = providerRecord{
 					properties: req.properties.Copy(),
@@ -214,12 +241,12 @@ func newMetaProvider(host plugin.Host) *metaProvider {
 func (p *metaProvider) getProvider(urn resource.URN) (plugin.Provider, error) {
 	logging.V(7).Infof("getting provider %v", urn)
 
-	provider, _, err := p.loadProvider(urn, nil)
+	provider, _, err := p.loadProvider(urn, nil, false)
 	return provider, err
 }
 
 func (p *metaProvider) loadProvider(urn resource.URN,
-	properties resource.PropertyMap) (plugin.Provider, []plugin.CheckFailure, error) {
+	properties resource.PropertyMap, allowUnknowns bool) (plugin.Provider, []plugin.CheckFailure, error) {
 
 	resp := make(chan providerLoadResponse)
 	defer close(resp)
@@ -228,6 +255,7 @@ func (p *metaProvider) loadProvider(urn resource.URN,
 		p.loadRequests <- providerLoadRequest{
 			urn:        urn,
 			properties: properties,
+			allowUnknowns: allowUnknowns,
 			response:   resp,
 		}
 	}()
@@ -252,7 +280,7 @@ func (p *metaProvider) Configure(props map[config.Key]string) error {
 func (p *metaProvider) Check(urn resource.URN, olds, news resource.PropertyMap,
 	allowUnknowns bool) (resource.PropertyMap, []plugin.CheckFailure, error) {
 
-	_, failures, err := p.loadProvider(urn, news)
+	_, failures, err := p.loadProvider(urn, news, allowUnknowns)
 	return news, failures, err
 }
 
@@ -304,5 +332,71 @@ func (p *metaProvider) GetPluginInfo() (workspace.PluginInfo, error) {
 
 func (p *metaProvider) SignalCancellation() error {
 	// TODO: this should probably cancel any outstanding load requests and return
+	return nil
+}
+
+type shimProvider struct {
+	pkg  tokens.Package
+	info workspace.PluginInfo
+}
+
+func (p *shimProvider) Close() error {
+	return nil
+}
+
+func (p *shimProvider) Pkg() tokens.Package {
+	return p.pkg
+}
+
+func (p *shimProvider) Configure(props map[config.Key]string) error {
+	contract.Fail()
+	return errors.New("the shimProvider is not configurable")
+}
+
+func (p *shimProvider) Check(urn resource.URN, olds, news resource.PropertyMap,
+	allowUnknowns bool) (resource.PropertyMap, []plugin.CheckFailure, error) {
+
+	return news, nil, nil
+}
+
+func (p *shimProvider) Diff(urn resource.URN, id resource.ID, olds, news resource.PropertyMap,
+	allowUnknowns bool) (plugin.DiffResult, error) {
+
+	// never require replacement
+	return plugin.DiffResult{Changes: plugin.DiffUnknown}, nil
+}
+
+func (p *shimProvider) Create(urn resource.URN,
+	news resource.PropertyMap) (resource.ID, resource.PropertyMap, resource.Status, error) {
+	contract.Fail()
+	return "", nil, resource.StatusOK, errors.New("the shimProvider cannot perform CRUD operations")
+}
+
+func (p *shimProvider) Read(urn resource.URN, id resource.ID,
+	props resource.PropertyMap) (resource.PropertyMap, error) {
+	return resource.PropertyMap{}, nil
+}
+
+func (p *shimProvider) Update(urn resource.URN, id resource.ID, olds,
+	news resource.PropertyMap) (resource.PropertyMap, resource.Status, error) {
+	contract.Fail()
+	return nil, resource.StatusOK, errors.New("the shimProvider cannot perform CRUD operations")
+}
+
+func (p *shimProvider) Delete(urn resource.URN, id resource.ID, props resource.PropertyMap) (resource.Status, error) {
+	contract.Fail()
+	return resource.StatusOK, errors.New("the shimProvider cannot perform CRUD operations")
+}
+
+func (p *shimProvider) Invoke(tok tokens.ModuleMember,
+	args resource.PropertyMap) (resource.PropertyMap, []plugin.CheckFailure, error) {
+	return resource.PropertyMap{}, nil, nil
+}
+
+func (p *shimProvider) GetPluginInfo() (workspace.PluginInfo, error) {
+	return p.info, nil
+}
+
+func (p *shimProvider) SignalCancellation() error {
 	return nil
 }
