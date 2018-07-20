@@ -102,7 +102,7 @@ func newRegisterDefaultProviderEvent(pkg tokens.Package, cfg map[config.Key]stri
 	// TODO: get the parenting right
 
 	t := tokens.Type("pulumi-providers:provider:" + pkg)
-	return &registerDefaultProviderEvent {
+	return &registerDefaultProviderEvent{
 		goal: resource.NewGoal(t, "default", true, properties, "", false, "", nil),
 		done: done,
 	}

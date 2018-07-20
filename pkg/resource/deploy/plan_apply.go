@@ -91,12 +91,12 @@ func (p *Plan) Start(opts Options) (*PlanIterator, error) {
 
 	// Create an iterator that can be used to perform the planning process.
 	return &PlanIterator{
-		p:            p,
-		opts:         opts,
-		src:          src,
-		stepGen:      newStepGenerator(p, opts),
-		pendingNews:  make(map[resource.URN]Step),
-		dones:        make(map[*resource.State]bool),
+		p:           p,
+		opts:        opts,
+		src:         src,
+		stepGen:     newStepGenerator(p, opts),
+		pendingNews: make(map[resource.URN]Step),
+		dones:       make(map[*resource.State]bool),
 	}, nil
 }
 

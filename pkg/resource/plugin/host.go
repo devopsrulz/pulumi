@@ -114,15 +114,15 @@ type pluginLoadRequest struct {
 }
 
 type defaultHost struct {
-	ctx             *Context                           // the shared context for this host.
-	config          ConfigSource                       // the source for provider configuration parameters.
-	events          Events                             // optional callbacks for plugin load events
-	analyzerPlugins map[tokens.QName]*analyzerPlugin   // a cache of analyzer plugins and their processes.
-	languagePlugins map[string]*languagePlugin         // a cache of language plugins and their processes.
-	resourcePlugins map[Provider]*resourcePlugin       // the set of loaded resource plugins.
-	plugins         []workspace.PluginInfo             // a list of plugins allocated by this host.
-	loadRequests    chan pluginLoadRequest             // a channel used to satisfy plugin load requests.
-	server          *hostServer                        // the server's RPC machinery.
+	ctx             *Context                         // the shared context for this host.
+	config          ConfigSource                     // the source for provider configuration parameters.
+	events          Events                           // optional callbacks for plugin load events
+	analyzerPlugins map[tokens.QName]*analyzerPlugin // a cache of analyzer plugins and their processes.
+	languagePlugins map[string]*languagePlugin       // a cache of language plugins and their processes.
+	resourcePlugins map[Provider]*resourcePlugin     // the set of loaded resource plugins.
+	plugins         []workspace.PluginInfo           // a list of plugins allocated by this host.
+	loadRequests    chan pluginLoadRequest           // a channel used to satisfy plugin load requests.
+	server          *hostServer                      // the server's RPC machinery.
 }
 
 var _ Host = (*defaultHost)(nil)

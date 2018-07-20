@@ -28,15 +28,15 @@ import (
 type Step interface {
 	Apply(preview bool) (resource.Status, error) // applies or previews this step.
 
-	Op() StepOp            // the operation performed by this step.
-	URN() resource.URN     // the resource URN (for before and after).
-	Type() tokens.Type     // the type affected by this step.
+	Op() StepOp             // the operation performed by this step.
+	URN() resource.URN      // the resource URN (for before and after).
+	Type() tokens.Type      // the type affected by this step.
 	Provider() resource.URN // the provider URN for this step.
-	Old() *resource.State  // the state of the resource before performing this step.
-	New() *resource.State  // the state of the resource after performing this step.
-	Res() *resource.State  // the latest state for the resource that is known (worst case, old).
-	Logical() bool         // true if this step represents a logical operation in the program.
-	Plan() *Plan           // the owning plan.
+	Old() *resource.State   // the state of the resource before performing this step.
+	New() *resource.State   // the state of the resource after performing this step.
+	Res() *resource.State   // the latest state for the resource that is known (worst case, old).
+	Logical() bool          // true if this step represents a logical operation in the program.
+	Plan() *Plan            // the owning plan.
 }
 
 // SameStep is a mutating step that does nothing.

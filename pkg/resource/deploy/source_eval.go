@@ -51,18 +51,18 @@ func NewEvalSource(plugctx *plugin.Context, runinfo *EvalRunInfo,
 	defaultProviderVersions map[tokens.Package]*semver.Version, dryRun bool) Source {
 
 	return &evalSource{
-		plugctx: plugctx,
-		runinfo: runinfo,
+		plugctx:                 plugctx,
+		runinfo:                 runinfo,
 		defaultProviderVersions: defaultProviderVersions,
-		dryRun:  dryRun,
+		dryRun:                  dryRun,
 	}
 }
 
 type evalSource struct {
-	plugctx *plugin.Context // the plugin context.
-	runinfo *EvalRunInfo    // the directives to use when running the program.
+	plugctx                 *plugin.Context                    // the plugin context.
+	runinfo                 *EvalRunInfo                       // the directives to use when running the program.
 	defaultProviderVersions map[tokens.Package]*semver.Version // the default provider verisons for this source.
-	dryRun  bool            // true if this is a dry-run operation only.
+	dryRun                  bool                               // true if this is a dry-run operation only.
 }
 
 func (src *evalSource) Close() error {
@@ -207,7 +207,7 @@ type defaultProviderResponse struct {
 }
 
 type defaultProviderRequest struct {
-	pkg tokens.Package
+	pkg      tokens.Package
 	response chan<- defaultProviderResponse
 }
 
@@ -281,18 +281,17 @@ func (d *defaultProviders) getDefaultProviderURN(pkg tokens.Package) (resource.U
 	return res.urn, res.err
 }
 
-
 // resmon implements the pulumirpc.ResourceMonitor interface and acts as the gateway between a language runtime's
 // evaluation of a program and the internal resource planning and deployment logic.
 type resmon struct {
-	src        *evalSource                        // the evaluation source.
-	providers        ProviderSource               // the provider source itself.
-	defaultProviders *defaultProviders            // the default provider manager.
-	regChan    chan RegisterResourceEvent        // the channel to send resource registrations to.
-	regOutChan chan *registerResourceOutputsEvent // the channel to send resource output registrations to.
-	addr       string                             // the address the host is listening on.
-	cancel     chan bool                          // a channel that can cancel the server.
-	done       chan error                         // a channel that resolves when the server completes.
+	src              *evalSource                        // the evaluation source.
+	providers        ProviderSource                     // the provider source itself.
+	defaultProviders *defaultProviders                  // the default provider manager.
+	regChan          chan RegisterResourceEvent         // the channel to send resource registrations to.
+	regOutChan       chan *registerResourceOutputsEvent // the channel to send resource output registrations to.
+	addr             string                             // the address the host is listening on.
+	cancel           chan bool                          // a channel that can cancel the server.
+	done             chan error                         // a channel that resolves when the server completes.
 
 }
 
@@ -305,22 +304,22 @@ func newResourceMonitor(src *evalSource, providers ProviderSource, regChan chan 
 
 	// Create a new default provider manager.
 	d := &defaultProviders{
-		versions: src.defaultProviderVersions,
+		versions:  src.defaultProviderVersions,
 		providers: make(map[tokens.Package]resource.URN),
-		config: src.runinfo.Target,
-		requests: make(chan defaultProviderRequest),
-		regChan: regChan,
-		cancel: cancel,
+		config:    src.runinfo.Target,
+		requests:  make(chan defaultProviderRequest),
+		regChan:   regChan,
+		cancel:    cancel,
 	}
 
 	// New up an engine RPC server.
 	resmon := &resmon{
-		src:        src,
-		providers: providers,
+		src:              src,
+		providers:        providers,
 		defaultProviders: d,
-		regChan:    regChan,
-		regOutChan: regOutChan,
-		cancel:     cancel,
+		regChan:          regChan,
+		regOutChan:       regOutChan,
+		cancel:           cancel,
 	}
 
 	// Fire up a gRPC server and start listening for incomings.

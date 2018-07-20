@@ -42,7 +42,7 @@ type ProviderSource interface {
 type providerLoadResponse struct {
 	provider plugin.Provider
 	failures []plugin.CheckFailure
-	err error
+	err      error
 }
 
 type providerLoadRequest struct {
@@ -57,7 +57,7 @@ type providerRecord struct {
 }
 
 type providerLoader struct {
-	host plugin.Host
+	host      plugin.Host
 	providers map[resource.URN]providerRecord // the map from plugin URN to plugin instance.
 }
 
@@ -93,14 +93,14 @@ func loadProvider(host plugin.Host, urn resource.URN,
 		if !versionProp.IsString() {
 			failures = append(failures, plugin.CheckFailure{
 				Property: "version",
-				Reason: "'version' must be a string",
+				Reason:   "'version' must be a string",
 			})
 		} else {
 			sv, err := semver.ParseTolerant(versionProp.StringValue())
 			if err != nil {
 				failures = append(failures, plugin.CheckFailure{
 					Property: "version",
-					Reason: fmt.Sprintf("could not parse provider version: %v", err),
+					Reason:   fmt.Sprintf("could not parse provider version: %v", err),
 				})
 			}
 			version = &sv
@@ -118,7 +118,7 @@ func loadProvider(host plugin.Host, urn resource.URN,
 		case v.IsComputed():
 			failures = append(failures, plugin.CheckFailure{
 				Property: k,
-				Reason: "provider properties must not be unknown",
+				Reason:   "provider properties must not be unknown",
 			})
 		case v.IsString():
 			key := config.MustMakeKey(string(urn.Type().Name()), string(k))
@@ -126,7 +126,7 @@ func loadProvider(host plugin.Host, urn resource.URN,
 		default:
 			failures = append(failures, plugin.CheckFailure{
 				Property: k,
-				Reason: "provider property values must be strings",
+				Reason:   "provider property values must be strings",
 			})
 		}
 	}
@@ -183,14 +183,14 @@ func (p *providerLoader) serve(requests <-chan providerLoadRequest) {
 			if len(failures) == 0 && err == nil {
 				p.providers[req.urn] = providerRecord{
 					properties: req.properties.Copy(),
-					provider: provider,
+					provider:   provider,
 				}
 			}
 
 			req.response <- providerLoadResponse{
 				provider: provider,
 				failures: failures,
-				err: err,
+				err:      err,
 			}
 		}
 	}
@@ -202,7 +202,7 @@ type metaProvider struct {
 
 func newMetaProvider(host plugin.Host) *metaProvider {
 	loader := &providerLoader{
-		host: host,
+		host:      host,
 		providers: make(map[resource.URN]providerRecord),
 	}
 	loadRequests := make(chan providerLoadRequest)
@@ -226,9 +226,9 @@ func (p *metaProvider) loadProvider(urn resource.URN,
 
 	go func() {
 		p.loadRequests <- providerLoadRequest{
-			urn: urn,
+			urn:        urn,
 			properties: properties,
-			response: resp,
+			response:   resp,
 		}
 	}()
 	response := <-resp

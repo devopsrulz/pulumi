@@ -64,25 +64,25 @@ func (src *refreshSource) Iterate(opts Options, providers ProviderSource) (Sourc
 	}
 
 	return &refreshSourceIterator{
-		plugctx: src.plugctx,
-		target: src.target,
+		plugctx:                 src.plugctx,
+		target:                  src.target,
 		defaultProviderVersions: defaultProviderVersions,
-		defaultProviders: make(map[tokens.Package]plugin.Provider),
-		providers: providers,
-		states:  states,
-		current: -1,
+		defaultProviders:        make(map[tokens.Package]plugin.Provider),
+		providers:               providers,
+		states:                  states,
+		current:                 -1,
 	}, nil
 }
 
 // refreshSourceIterator returns state from an existing snapshot, augmented by consulting the resource provider.
 type refreshSourceIterator struct {
-	plugctx *plugin.Context
-	target *Target
+	plugctx                 *plugin.Context
+	target                  *Target
 	defaultProviderVersions map[tokens.Package]*semver.Version
-	defaultProviders map[tokens.Package]plugin.Provider
-	providers ProviderSource
-	states  []*resource.State
-	current int
+	defaultProviders        map[tokens.Package]plugin.Provider
+	providers               ProviderSource
+	states                  []*resource.State
+	current                 int
 }
 
 func (iter *refreshSourceIterator) Close() error {
