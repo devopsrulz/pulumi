@@ -18,8 +18,10 @@ import (
 	"fmt"
 
 	"github.com/blang/semver"
+	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 
+	"github.com/pulumi/pulumi/pkg/diag"
 	"github.com/pulumi/pulumi/pkg/resource"
 	"github.com/pulumi/pulumi/pkg/resource/config"
 	"github.com/pulumi/pulumi/pkg/resource/plugin"
@@ -59,7 +61,27 @@ type providerLoader struct {
 	providers map[resource.URN]providerRecord // the map from plugin URN to plugin instance.
 }
 
-func (p *providerLoader) loadProvider(urn resource.URN,
+func loadProviderRaw(host plugin.Host, pkg tokens.Package, version *semver.Version,
+	cfg map[config.Key]string) (plugin.Provider, error) {
+
+	provider, err := host.Provider(pkg, version)
+	if err != nil {
+		return nil, err
+	}
+
+	// Attempt to configure the plugin. If configuration fails, discard the loaded plugin.
+	if err = provider.Configure(cfg); err != nil {
+		closeErr := host.CloseProvider(provider)
+		if closeErr != nil {
+			logging.Infof("Error closing provider; ignoring: %v", closeErr)
+		}
+		return nil, err
+	}
+
+	return provider, nil
+}
+
+func loadProvider(host plugin.Host, urn resource.URN,
 	properties resource.PropertyMap) (plugin.Provider, []plugin.CheckFailure, error) {
 
 	logging.V(7).Infof("loading provider %v", urn)
@@ -115,17 +137,8 @@ func (p *providerLoader) loadProvider(urn resource.URN,
 	}
 
 	// Load the plugin.
-	provider, err := p.host.Provider(tokens.Package(urn.Type().Name()), version)
+	provider, err := loadProviderRaw(host, tokens.Package(urn.Type().Name()), version, cfg)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	// Attempt to configure the plugin. If configuration fails, discard the loaded plugin.
-	if err = provider.Configure(cfg); err != nil {
-		closeErr := p.host.CloseProvider(provider)
-		if closeErr != nil {
-			logging.Infof("Error closing provider; ignoring: %v", closeErr)
-		}
 		return nil, nil, err
 	}
 
@@ -133,6 +146,26 @@ func (p *providerLoader) loadProvider(urn resource.URN,
 
 	// Return the loaded and configured plugin.
 	return provider, nil, nil
+}
+
+func getErrorForCheckFailure(res *resource.State, failure plugin.CheckFailure) error {
+	urn := res.URN
+	if failure.Property != "" {
+		return errors.Errorf(diag.GetResourcePropertyInvalidValueError(urn).Message,
+			res.Type, urn.Name(), failure.Property, res.Inputs[failure.Property], failure.Reason)
+	}
+
+	return errors.Errorf(diag.GetResourceInvalidError(urn).Message, res.Type, urn.Name(), failure.Reason)
+}
+
+func getErrorForCheckFailures(res *resource.State, failures []plugin.CheckFailure) error {
+	contract.Assert(len(failures) > 0)
+
+	var err error
+	for _, f := range failures {
+		err = multierror.Append(err, getErrorForCheckFailure(res, f))
+	}
+	return err
 }
 
 func (p *providerLoader) serve(requests <-chan providerLoadRequest) {
@@ -146,7 +179,7 @@ func (p *providerLoader) serve(requests <-chan providerLoadRequest) {
 			}
 		} else {
 			contract.Assert(!ok)
-			provider, failures, err := p.loadProvider(req.urn, req.properties)
+			provider, failures, err := loadProvider(p.host, req.urn, req.properties)
 			if len(failures) == 0 && err == nil {
 				p.providers[req.urn] = providerRecord{
 					properties: req.properties.Copy(),

@@ -495,5 +495,12 @@ func getProvider(s Step) (plugin.Provider, error) {
 	if s.Type().Package() == "pulumi-providers" {
 		return s.Plan().metaProvider, nil
 	}
+	if _, isDelete := s.(*DeleteStep); isDelete {
+		provider, ok := s.Plan().oldProviders[s.Provider()]
+		if !ok {
+			return nil, ErrMissingProvider
+		}
+		return provider, nil
+	}
 	return s.Plan().GetProvider(s.Provider())
 }

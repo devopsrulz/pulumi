@@ -15,11 +15,13 @@
 package deploy
 
 import (
+	"github.com/blang/semver"
 	"github.com/pkg/errors"
 
 	"github.com/pulumi/pulumi/pkg/resource"
 	"github.com/pulumi/pulumi/pkg/resource/plugin"
 	"github.com/pulumi/pulumi/pkg/tokens"
+	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/workspace"
 )
 
@@ -48,12 +50,25 @@ func (src *refreshSource) Info() interface{}           { return nil }
 func (src *refreshSource) IsRefresh() bool             { return true }
 
 func (src *refreshSource) Iterate(opts Options, providers ProviderSource) (SourceIterator, error) {
+	defaultProviderVersions := make(map[tokens.Package]*semver.Version)
+
 	var states []*resource.State
 	if snap := src.target.Snapshot; snap != nil {
 		states = snap.Resources
+
+		for _, p := range src.target.Snapshot.Manifest.Plugins {
+			if p.Kind == workspace.ResourcePlugin {
+				defaultProviderVersions[tokens.Package(p.Name)] = p.Version
+			}
+		}
 	}
+
 	return &refreshSourceIterator{
 		plugctx: src.plugctx,
+		target: src.target,
+		defaultProviderVersions: defaultProviderVersions,
+		defaultProviders: make(map[tokens.Package]plugin.Provider),
+		providers: providers,
 		states:  states,
 		current: -1,
 	}, nil
@@ -62,6 +77,10 @@ func (src *refreshSource) Iterate(opts Options, providers ProviderSource) (Sourc
 // refreshSourceIterator returns state from an existing snapshot, augmented by consulting the resource provider.
 type refreshSourceIterator struct {
 	plugctx *plugin.Context
+	target *Target
+	defaultProviderVersions map[tokens.Package]*semver.Version
+	defaultProviders map[tokens.Package]plugin.Provider
+	providers ProviderSource
 	states  []*resource.State
 	current int
 }
@@ -86,11 +105,39 @@ func (iter *refreshSourceIterator) Next() (SourceEvent, error) {
 	}
 }
 
+func (iter *refreshSourceIterator) getProvider(s *resource.State) (plugin.Provider, error) {
+	contract.Assert(s.Custom)
+	contract.Assert(s.Type.Package() != "pulumi-providers")
+
+	if s.Provider != "" {
+		return iter.providers.GetProvider(s.Provider)
+	}
+
+	// If we have a legacy resource, load or fetch the appropriate default provider.
+	pkg := s.Type.Package()
+	if provider, ok := iter.defaultProviders[pkg]; ok {
+		return provider, nil
+	}
+
+	cfg, err := iter.target.GetPackageConfig(pkg)
+	if err != nil {
+		return nil, err
+	}
+
+	provider, err := loadProviderRaw(iter.plugctx.Host, pkg, iter.defaultProviderVersions[pkg], cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	iter.defaultProviders[pkg] = provider
+	return provider, nil
+}
+
 // newRefreshGoal refreshes the state, if appropriate, and returns a new goal state.
 func (iter *refreshSourceIterator) newRefreshGoal(s *resource.State) (*resource.Goal, error) {
 	// If this is a custom resource, go ahead and load up its plugin, and ask it to refresh the state.
-	if s.Custom {
-		provider, err := iter.plugctx.Host.Provider(s.Type.Package(), nil)
+	if s.Custom && s.Type.Package() != "pulumi-providers" {
+		provider, err := iter.getProvider(s)
 		if err != nil {
 			return nil, errors.Wrapf(err, "fetching provider to refresh %s", s.URN)
 		}
@@ -100,12 +147,13 @@ func (iter *refreshSourceIterator) newRefreshGoal(s *resource.State) (*resource.
 		} else if refreshed == nil {
 			return nil, nil // the resource was deleted.
 		}
-		s = resource.NewState(
-			s.Type, s.URN, s.Custom, s.Delete, s.ID, s.Inputs, refreshed, s.Parent, s.Protect, "", s.Dependencies)
+		s = resource.NewState(s.Type, s.URN, s.Custom, s.Delete, s.ID, s.Inputs, refreshed, s.Parent, s.Protect,
+			s.Provider, s.Dependencies)
 	}
 
 	// Now just return the actual state as the goal state.
-	return resource.NewGoal(s.Type, s.URN.Name(), s.Custom, s.Outputs, s.Parent, s.Protect, "", s.Dependencies), nil
+	return resource.NewGoal(s.Type, s.URN.Name(), s.Custom, s.Outputs, s.Parent, s.Protect, s.Provider,
+		s.Dependencies), nil
 }
 
 type refreshSourceEvent struct {

@@ -17,11 +17,14 @@ package deploy
 import (
 	"reflect"
 
+	"github.com/blang/semver"
 	"github.com/pkg/errors"
 
 	"github.com/pulumi/pulumi/pkg/resource"
+	"github.com/pulumi/pulumi/pkg/tokens"
 	"github.com/pulumi/pulumi/pkg/util/contract"
 	"github.com/pulumi/pulumi/pkg/util/logging"
+	"github.com/pulumi/pulumi/pkg/workspace"
 )
 
 // Options controls the planning and deployment process.
@@ -39,6 +42,47 @@ type Events interface {
 
 // Start initializes and returns an iterator that can be used to step through a plan's individual steps.
 func (p *Plan) Start(opts Options) (*PlanIterator, error) {
+	// Load any old providers so that we can process deletes.
+	oldDefaultProviderVersions := make(map[tokens.Package]*semver.Version)
+	if p.prev != nil {
+		for _, p := range p.prev.Manifest.Plugins {
+			if p.Kind == workspace.ResourcePlugin {
+				oldDefaultProviderVersions[tokens.Package(p.Name)] = p.Version
+			}
+		}
+	}
+
+	for urn, res := range p.olds {
+		pkg := urn.Type().Package()
+		if pkg == "pulumi-providers" {
+			provider, failures, err := loadProvider(p.ctx.Host, urn, res.Inputs)
+			if err != nil {
+				return nil, err
+			}
+			if len(failures) != 0 {
+				return nil, getErrorForCheckFailures(res, failures)
+			}
+			p.oldProviders[urn] = provider
+		} else if res.Custom && res.Provider == "" {
+			providerURN := p.defaultProviderURN(pkg)
+			if _, ok := p.oldProviders[providerURN]; ok {
+				continue
+			}
+
+			cfg, err := p.target.GetPackageConfig(pkg)
+			if err != nil {
+				return nil, err
+			}
+
+			provider, err := loadProviderRaw(p.ctx.Host, pkg, oldDefaultProviderVersions[pkg], cfg)
+			if err != nil {
+				return nil, err
+			}
+
+			res.Provider, p.oldProviders[providerURN] = providerURN, provider
+		}
+	}
+
 	// Ask the source for its iterator.
 	src, err := p.source.Iterate(opts, p)
 	if err != nil {

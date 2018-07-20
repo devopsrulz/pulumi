@@ -34,6 +34,7 @@ type Plan struct {
 	target    *Target                          // the deployment target.
 	prev      *Snapshot                        // the old resource snapshot for comparison.
 	olds      map[resource.URN]*resource.State // a map of all old resources.
+	oldProviders map[resource.URN]plugin.Provider // a map of all old providers.
 	source    Source                           // the source of new resources.
 	analyzers []tokens.QName                   // the analyzers to run during this plan's generation.
 	preview   bool                             // true if this plan is to be previewed rather than applied.
@@ -80,6 +81,7 @@ func NewPlan(ctx *plugin.Context, target *Target, prev *Snapshot, source Source,
 		target:    target,
 		prev:      prev,
 		olds:      olds,
+		oldProviders: make(map[resource.URN]plugin.Provider),
 		source:    source,
 		analyzers: analyzers,
 		preview:   preview,

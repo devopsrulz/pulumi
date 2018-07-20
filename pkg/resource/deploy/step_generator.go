@@ -93,7 +93,7 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, err
 
 	// If this isn't a refresh, ensure the provider is okay with this resource and fetch the inputs to pass to
 	// subsequent methods.  If these are not inputs, we are just going to blindly store the outputs, so skip this.
-	if prov != nil && !refresh {
+	if prov != nil && (!refresh || goal.Type.Package() == "pulumi-providers") {
 		var failures []plugin.CheckFailure
 
 		// If we are re-creating this resource because it was deleted earlier, the old inputs are now
