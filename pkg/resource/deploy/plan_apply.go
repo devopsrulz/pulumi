@@ -64,8 +64,8 @@ func (p *Plan) Start(opts Options) (*PlanIterator, error) {
 			}
 			p.oldProviders[urn] = provider
 		} else if res.Custom && res.Provider == "" {
-			providerURN := p.defaultProviderURN(pkg)
-			if _, ok := p.oldProviders[providerURN]; ok {
+			res.Provider = p.defaultProviderURN(pkg)
+			if _, ok := p.oldProviders[res.Provider]; ok {
 				continue
 			}
 
@@ -79,7 +79,7 @@ func (p *Plan) Start(opts Options) (*PlanIterator, error) {
 				return nil, err
 			}
 
-			res.Provider, p.oldProviders[providerURN] = providerURN, provider
+			p.oldProviders[res.Provider] = provider
 		}
 	}
 
