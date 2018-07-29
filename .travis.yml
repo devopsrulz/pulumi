@@ -1,13 +1,11 @@
 # It may be tempting to add parens around each individual clause in this expression, but Travis then builds pushes anyway
-if: branch = master OR branch =~ ^release/ OR tag IS present
+if: branch = master OR branch =~ ^release/ OR branch =~ ^feature/ OR tag IS present
 matrix:
   include:
     - os: linux
       env: NODE_VERSION=v6.10.3
     - os: linux
       env: NODE_VERSION=v8.11.1 TRAVIS_PUBLISH_PACKAGES=true
-    - os: osx
-      env: NODE_VERSION=v9.11.1
 language: go
 go: 1.9
 sudo: true # give us 7.5GB and >2 bursted cores.
@@ -15,6 +13,7 @@ git:
     depth: false
 before_install:
     - git clone https://github.com/pulumi/scripts ${GOPATH}/src/github.com/pulumi/scripts
+    - git -C ${GOPATH}/src/github.com/pulumi/scripts checkout origin/feature/ellismg/compose-build
     - source ${GOPATH}/src/github.com/pulumi/scripts/ci/prepare-environment.sh
     - source ${PULUMI_SCRIPTS}/ci/keep-failed-tests.sh
 install:
@@ -22,7 +21,7 @@ install:
 before_script:
     - ${PULUMI_SCRIPTS}/ci/ensure-dependencies
 script:
-    - make travis_${TRAVIS_EVENT_TYPE}
+    - ${PULUMI_SCRIPTS}/compose/run-compose 1
 after_failure:
     - ${PULUMI_SCRIPTS}/ci/upload-failed-tests
 notifications:
